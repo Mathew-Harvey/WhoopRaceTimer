@@ -961,6 +961,11 @@ SCREENS.gate = app => {
           }
           app.saveRf(slot, { threshold: v });
           app.pushConfig([slot], { now: true });
+          /* The other two paths that move a trigger re-judge the passes against
+           * it; this one did not, so the line underneath went on reporting
+           * against the old level and printed margins like "cleared by only
+           * -900". */
+          app.sig.get(slot)?.rejudge(v);
           if (app.race.active) toast('Saved — it reaches the timer when the session ends');
           app.markStructural();
         } });
@@ -1167,7 +1172,12 @@ function renderPassLine(app, slot, ref, sig, threshold) {
    * and the app could sit there disagreeing about the same gate. */
   const rep = tuning.passReport(sig?.passes || [], threshold,
                                 (tuning.PRESETS[app.settings.preset] || {}).fraction);
-  const key = `${rep.seen}|${rep.counted}|${rep.worstMiss}|${Math.round(threshold ?? -1)}`;
+  /* Everything the line draws, including the number on the button. Leaving the
+   * suggestion out froze the whole row once the pass history saturated — the
+   * counts stop changing while the suggestion keeps moving — so the button went
+   * on offering, and writing, a level from twelve laps ago. */
+  const key = `${rep.seen}|${rep.counted}|${rep.worstMiss}|${rep.verdict}|` +
+              `${Math.round(threshold ?? -1)}|${Math.round(rep.suggest ?? -1)}`;
   if (ref.passLine._t === key) return;
   ref.passLine._t = key;
 
@@ -1361,14 +1371,23 @@ SCREENS.findChannel = (app, slot) => {
         rfFor: s => ({ ...(app.timer.rfSetup[s] || {}), ...app.rfFor(s) }),
         sample: s => { const x = app.sig.slots.get(s); return x ? { v: x.value, t: x.lastAt } : null; },
       });
-      const results = await scanner.run(slot, p => {
-        status.textContent = `Sweeping… ${p.index + 1} of ${p.total}`;
-        draw(p.results);
-      });
-      app.scanning = null;
-      app.pushConfig([slot], { now: true });     // put the slot back where it belongs
-      start.disabled = false;
-      mount(start, 'Scan again');
+      let results = [];
+      try {
+        results = await scanner.run(slot, p => {
+          status.textContent = `Sweeping… ${p.index + 1} of ${p.total}`;
+          draw(p.results);
+        });
+      } finally {
+        /* The same guarantee the fine sweep has. A throw anywhere in there —
+         * out of the progress callback, out of a channel lookup on a stale
+         * pilot channel — used to leave app.scanning set, which makes the app
+         * discard every RF-setup record for this receiver for the rest of the
+         * session, with the button stuck on "Sweeping…" and nothing said. */
+        app.scanning = null;
+        app.pushConfig([slot], { now: true });   // put the slot back where it belongs
+        start.disabled = false;
+        mount(start, 'Scan again');
+      }
       if (scanner.lost) {
         status.textContent = 'Timer link lost during the scan.';
         mount(result, h('div.note', { 'data-tone': 'bad' },
@@ -1412,7 +1431,9 @@ SCREENS.findChannel = (app, slot) => {
            * cannot settle it: there is nothing between R8 at 5917 and E7 at
            * 5925 to look at. The receiver will tune anywhere, so look at the
            * gaps and let the shape say where the video actually is. */
-          h('button.ghost', { onclick: () => fineSweep(app, slot, best.freq, status, bars, result) },
+          h('button.ghost', {
+            onclick: () => fineSweep(app, slot, best.freq, status, bars, result,
+                                     s => { scanner = s; }) },
             'Show the real spectrum'))));
     } }, 'Start the scan');
 
@@ -1573,7 +1594,7 @@ function drawBars(bars, results) {
  * stronger at E7, 5925 — only the spectrum can say which is right, and the
  * receiver is perfectly willing to tune to the gaps.
  */
-async function fineSweep(app, slot, centre, status, bars, result) {
+async function fineSweep(app, slot, centre, status, bars, result, register) {
   const from = Math.max(5600, Math.round(centre) - 24);
   const to = Math.min(5950, Math.round(centre) + 24);
   status.textContent = `Sweeping ${from}–${to} MHz in 2 MHz steps…`;
@@ -1582,6 +1603,12 @@ async function fineSweep(app, slot, centre, status, bars, result) {
     rfFor: s => ({ ...(app.timer.rfSetup[s] || {}), ...app.rfFor(s) }),
     sample: s => { const x = app.sig.slots.get(s); return x ? { v: x.value, t: x.lastAt } : null; },
   });
+  /* Handed to the sheet so closing it stops this sweep. Without that, closing
+   * the sheet cleared app.scanning while this scanner carried on retuning the
+   * receiver — and every echo then looked like the timer disagreeing about the
+   * channel, so the app wrote the pilot's channel back several times a second,
+   * which is the write storm everything else here guards against. */
+  register?.(scanner);
   app.scanning = slot;
   let points = [];
   try {
@@ -1598,12 +1625,22 @@ async function fineSweep(app, slot, centre, status, bars, result) {
     app.pushConfig([slot], { now: true });
   }
   drawBars(bars, points);
-  if (!points.length) {
+  /* Length alone cannot tell these apart, and presenting four points of a
+   * twenty-five point sweep as "the real shape of your signal" is a confident
+   * verdict built from a sixth of the range with nothing on screen to say so. */
+  if (scanner.lost) {
     status.textContent = '';
     mount(result, h('div.note', { 'data-tone': 'bad' },
-      h('strong', 'The sweep did not finish'),
-      'The timer link dropped before anything was measured. Power-cycle it, reconnect, ' +
-      'and try again — your channel is put back automatically.'));
+      h('strong', 'The sweep was cut short'),
+      `The timer link dropped after ${plural(points.length, 'point')}, so this is not the ` +
+      'whole picture. Power-cycle the timer, reconnect and try again — and check the ' +
+      'receiver’s channel, because a sweep that ends early cannot put it back.'));
+    return;
+  }
+  if (!points.length) {
+    status.textContent = '';
+    mount(result, h('div.note', { 'data-tone': 'warn' },
+      h('strong', 'Nothing was measured'), 'The sweep stopped before it read anything.'));
     return;
   }
   const top = [...points].sort((a, b) => b.peak - a.peak)[0];

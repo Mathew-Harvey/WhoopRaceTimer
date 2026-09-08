@@ -184,7 +184,8 @@ if ! command -v bluetoothctl >/dev/null 2>&1 && ! [ -d /sys/class/bluetooth ]; t
   if command -v pacman >/dev/null 2>&1; then BT_PKGS="bluez bluez-utils"; else BT_PKGS="bluez"; fi
   if [ -n "$CMD" ]; then
     # shellcheck disable=SC2086
-    if run $CMD $BT_PKGS; then CHANGED=1; else FAILED=1; fi
+    if [ "$CHECK_ONLY" = 1 ]; then run $CMD $BT_PKGS
+    elif run $CMD $BT_PKGS; then CHANGED=1; else FAILED=1; fi
   else
     info "unknown package manager — install BlueZ by hand"
     FAILED=1
@@ -221,6 +222,10 @@ fi
 echo
 if [ "$CHECK_ONLY" = 1 ]; then
   bold "Check only — nothing was changed. Run without --check to fix."
+elif [ "$FAILED" = 1 ]; then
+  # Saying "nothing needed changing" and "some steps failed" in consecutive
+  # lines is worse than either alone.
+  bold "Finished with problems."
 elif [ "$CHANGED" = 1 ]; then
   bold "Done."
   [ "$RESTART_BROWSER" = 1 ] && \

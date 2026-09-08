@@ -99,6 +99,12 @@ export class LapRFLink {
   }
   log(msg) { this.emit('log', msg); }
 
+  /** Can anything said to this link still reach the radio? `connected` alone
+   *  is not the answer: a link replaced by one to the same device is detached
+   *  but deliberately left connected, because the GATT connection now belongs
+   *  to its replacement. */
+  get alive() { return this.connected && !this._dead; }
+
   /** True once config writes will actually reach the timer. */
   get canControl() { return this.connected && this.mode === 'binary'; }
 

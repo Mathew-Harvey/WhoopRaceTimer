@@ -34,6 +34,11 @@ const AUTO_TUNE_GAP_MS = 15000, AUTO_TUNE_MIN_PASSES = 3;
  * quad seen twice — see rejectBleed(). */
 const BLEED_WINDOW_S = 0.6, BLEED_RATIO = 1.25;
 
+/* A starting level for a receiver nobody has measured and whose timer will not
+ * say what it holds — used only to carry a channel the pilot explicitly chose,
+ * and only until a flown lap replaces it. */
+const PROVISIONAL_THRESHOLD = 1600;
+
 
 
 class App {
@@ -338,6 +343,14 @@ class App {
     this.timer = { battery: null, lastRx: 0, rfSetup: {} };
     this._writeTries = {};
     this.calCoach?.reset();
+    /* Evidence belongs to the timer that produced it. A demo run fills every
+     * slot with synthetic peaks; carrying those onto a real LapRF made it
+     * "calibrated" the instant it connected, on passes from a timer that was
+     * never plugged in — and in solo that starts the race by itself. */
+    this.sig = new tuning.SignalBank(SLOTS);
+    this.cal.cancel();
+    this._calibFrom = null;
+    this._autoAt = {};
     /* Nothing is written to the timer just because we connected. The link's
      * hello() asks it to describe itself; adoptRfSetup() then corrects only the
      * slots where our saved intent actually differs. Writing on connect is how
@@ -493,6 +506,15 @@ class App {
       const val = mean ? (v.meanRssi ?? v.maxRssi) : v.lastRssi;
       if (val == null) continue;
       this.sig.add(slot, val);
+      /* A sweep hops this receiver across forty frequencies while a quad is
+       * held a metre away, so its signal leaps and collapses over and over.
+       * Those are not passes and nobody flew them — but they look identical to
+       * the watcher, and they now feed the readiness that decides whether the
+       * gate is calibrated. Left in, a channel scan alone could satisfy the
+       * coach, which would announce "calibration complete" and start a solo
+       * race on evidence that never existed. The live value is still recorded,
+       * because the sweep itself is reading it. */
+      if (slot === this.scanning) continue;
       this.cal.feed(slot, val);
       /* Watch every excursion against the trigger this slot is actually on, so
        * the tuning screen can say whether a pass would have counted. A gate set
@@ -725,15 +747,17 @@ class App {
        * written over whatever it was actually using, purely because the app
        * wanted to flip an enable bit. The slot waits: calibration produces a
        * measured level within a few laps, and the write happens then. */
-      const threshold = cfg.threshold ?? hw.threshold ?? null;
-      if (threshold == null) {
-        /* Nothing to write, but the slot is no longer waiting for anything
-         * either. Leaving it dirty made every later flush retry it forever and
-         * kept "this change reaches the timer when the session ends" on screen
-         * for the whole race. */
-        settled.push(slot);
-        continue;
-      }
+      /* Never invent a trigger for a slot the app is only mirroring. But a
+       * slot the pilot has actually chosen a channel for is different: refusing
+       * to write it at all was worse than the problem it fixed, because the
+       * receiver then stays on the wrong frequency, hears nothing, produces no
+       * passes, and so never earns the measured trigger that would have let the
+       * write happen — a deadlock that silently loses the pilot's choice. So an
+       * explicit choice goes out with a provisional level, which self-tuning
+       * replaces within a few laps. */
+      const known = cfg.threshold ?? hw.threshold ?? null;
+      const threshold = known ?? (this.touched[slot] ? PROVISIONAL_THRESHOLD : null);
+      if (threshold == null) { settled.push(slot); continue; }
       const want = {
         slot, band: rf.band, channel: rf.channel, frequency: rf.frequency,
         threshold: Number(threshold),
@@ -1061,7 +1085,7 @@ class App {
       ceiling: cfg.ceiling ?? null,
       live: this.sig.quiet(slot),
       enabled: p ? p.enabled : true,
-      ready: this.readiness(slot).ready,
+      cal: this.readiness(slot),
     });
     /* Config writes wait while a session runs. A verdict that describes a
      * threshold the timer does not hold yet has to say so. */

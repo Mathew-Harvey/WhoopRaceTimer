@@ -11,7 +11,7 @@
 import { Calibration, SlotSignal, passReport, derive } from '../static/js/tuning.js';
 import { viewBytes } from '../static/js/link.js';
 import { ChannelScanner } from '../static/js/tuning.js';
-import { ALL_CHANNELS } from '../static/js/laprf.js';
+import { ALL_CHANNELS, splitRecords, decodeRecord } from '../static/js/laprf.js';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -102,6 +102,10 @@ function sweep(overrides) {
   let onAir = 5880, i = 0;
   const link = {
     connected: true,
+    /* A real link is alive only while it is both connected and not retired. A
+     * fixture that omits this models a link that cannot exist, and would have
+     * hidden the very check that stops a sweep running on a dead link. */
+    alive: true,
     /* Transmission takes real time, and the receiver only moves once it lands —
      * and only for a tuning record, not for the status-rate request the sweep
      * opens with. */
@@ -113,7 +117,9 @@ function sweep(overrides) {
   };
   const sc = new ChannelScanner({
     link,
-    rfFor: () => ({ threshold: 1600, gain: 58 }),
+    /* Where the receiver was before the sweep: the restore depends on this
+     * being present, and a fixture without a frequency never exercised it. */
+    rfFor: () => ({ band: 2, channel: 8, frequency: 5917, threshold: 1600, gain: 58 }),
     sample: () => ({ v: truth[onAir], t: Date.now() / 1000 }),
     settleMs: 260, maxWaitMs: 900,
   });
@@ -123,6 +129,45 @@ function sweep(overrides) {
   eq('and its weaker neighbour reads weak', by['5925'], 1500);
   check('the neighbour is not inflated past it', by['5925'] < by['5917'],
         `5925 read ${by['5925']} against 5917 at ${by['5917']}`);
+}
+
+/* A sweep leaves the receiver where it found it, and does not quietly switch a
+ * slot back on that the pilot had switched off. */
+{
+  const sent = [];
+  const link = { connected: true, alive: true, send: async f => { sent.push(f); } };
+  const sc = new ChannelScanner({
+    link,
+    rfFor: () => ({ band: 2, channel: 8, frequency: 5917, threshold: 1450, gain: 47,
+                    enabled: false }),
+    sample: () => ({ v: 1000, t: Date.now() / 1000 + 999 }),
+    settleMs: 0, maxWaitMs: 1,
+  });
+  await sc.sweepRange(1, 5930, 5934, 4);
+  const decoded = sent.map(f => decodeRecord(splitRecords(f.slice()).records[0]));
+  const rf = decoded.filter(d => d.type === 'rfSetup');
+  const last = rf[rf.length - 1];
+  eq('the receiver goes back to its own frequency', last.frequency, 5917);
+  eq('with the trigger it had', last.threshold, 1450);
+  eq('and the gain it had', last.gain, 47);
+  eq('and still switched off', last.enabled, 0);
+  const intervals = decoded.filter(d => d.statusInterval !== undefined).map(d => d.statusInterval);
+  eq('and the signal stream is left fast', intervals[intervals.length - 1], 200);
+}
+
+/* A sweep on a link that has been retired — replaced by one to the same device,
+ * so still marked connected — must fail rather than invent a set of readings
+ * from a receiver it never actually retuned. */
+{
+  const link = { connected: true, alive: false, send: async () => true };
+  const sc = new ChannelScanner({
+    link, rfFor: () => ({ frequency: 5917 }),
+    sample: () => ({ v: 2000, t: Date.now() / 1000 + 999 }),
+    settleMs: 0, maxWaitMs: 1,
+  });
+  const rows = await sc.sweepRange(1, 5910, 5920, 2);
+  eq('a retired link measures nothing', rows.length, 0);
+  eq('and says so', sc.lost, true);
 }
 
 /* ------------------------------------------------------------- ceiling --- */

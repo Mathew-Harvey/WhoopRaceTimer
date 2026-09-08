@@ -53,7 +53,7 @@ export function quality(floor, ceiling) {
  * must never let that state sit quietly on screen, because it looks identical
  * to "nobody has flown yet".
  */
-export function gateHealth({ threshold, floor, ceiling, live, enabled = true, ready = false }) {
+export function gateHealth({ threshold, floor, ceiling, live, enabled = true, cal = {} }) {
   if (!enabled) return { level: 'off', title: 'Not racing', detail: 'This slot is switched off.' };
   /* The quiet level is whichever is higher: what was measured, or what the
    * receiver reports right now. A gate tuned in an empty room and then run
@@ -72,14 +72,29 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true, re
       action: 'tune',
     };
   }
-  /* Calibrated by flying, which is the ordinary way now. The measured floor and
-   * ceiling below come only from the manual wizard, so judging health on them
-   * alone left every self-calibrated receiver reading "still calibrating"
-   * forever — on every screen, immediately after the app had said out loud that
-   * the gate was calibrated. */
-  if (ready && (floor == null || ceiling == null)) {
+  /* What the flown laps say, which outranks anything the manual wizard measured
+   * on some earlier day. Judging a self-calibrated gate on wizard bounds alone
+   * left every one of them reading "still calibrating" forever — and judging a
+   * re-tuned gate on *stale* bounds made it read "trigger is above the strongest
+   * pass" seconds after the app had said out loud that it was calibrated. */
+  if (cal.ready) {
     return { level: 'good', title: 'Calibrated',
              detail: `Trigger ${fmt(threshold)}, set from the laps you flew.` };
+  }
+  /* Evidence exists and it is not good. Falling through to "calibrating" here
+   * hid a gate that had stopped counting laps behind a reassuring word, and the
+   * gate screen suppresses that level entirely. */
+  if (cal.seen >= MIN_PASSES && cal.verdict && cal.verdict !== 'none') {
+    if (cal.verdict === 'all missed' || cal.verdict === 'below noise') {
+      return { level: 'bad', fatal: cal.verdict === 'below noise',
+               title: 'Not counting laps',
+               detail: `${cal.seen} passes seen and none of them would be timed. ` +
+                       'Keep flying — the trigger is being corrected.' };
+    }
+    if (cal.verdict === 'some missed' || cal.verdict === 'fragile') {
+      return { level: 'warn', title: 'Missing some passes',
+               detail: 'Not every crossing would be timed yet. A few more laps.' };
+    }
   }
   if (floor != null && ceiling != null) {
     const q = quality(floor, ceiling);
@@ -633,7 +648,7 @@ export class ChannelScanner {
     try {
       const points = channels || laprf.ALL_CHANNELS;
       for (let i = 0; i < points.length && this.active; i++) {
-        if (!this.link.connected) { this.lost = true; break; }
+        if (!this.link.alive) { this.lost = true; break; }
         const ch = points[i];
         /* A named channel carries a band and channel index; a raw frequency
          * point does not, and the receiver tunes by frequency either way. */
@@ -664,7 +679,7 @@ export class ChannelScanner {
         let lastT = 0;
         while (performance.now() < deadline && this.active && fresh.length < 2) {
           await new Promise(r => setTimeout(r, 40));
-          if (!this.link.connected) { this.lost = true; break; }
+          if (!this.link.alive) { this.lost = true; break; }
           const s = this.sample(slot);
           if (s && s.t > sentAt && s.t !== lastT) { lastT = s.t; fresh.push(s.v); }
         }
@@ -681,12 +696,17 @@ export class ChannelScanner {
        * after: calibration measures the peak of a pass, and a peak lasts less
        * than a second, so one use of "find my channel" left every later lap
        * being stepped over — on a gate that was working perfectly before. */
-      if (this.link.connected) {
+      if (this.link.alive) {
         if (before.frequency) {
           this.link.send(laprf.setRfSetup({
             slot, band: before.band, channel: before.channel, frequency: before.frequency,
             threshold: before.threshold ?? SCAN_THRESHOLD, gain: before.gain ?? SCAN_GAIN,
-            enabled: true }));
+            /* Whatever it was, not whatever the sweep left it as. The sweep
+             * switches every channel on to measure it, so this is the only
+             * write that can put a deliberately disabled receiver back — and a
+             * slot switched off in solo practice that comes back on can report
+             * passings for a pilot who is not racing. */
+            enabled: before.enabled ?? true }));
         }
         this.link.send(laprf.setStatusInterval(STATUS_INTERVAL_MS));
       }

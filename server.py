@@ -16,8 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import laprf, device as devmod, race as racemod, sigtrack, store, tuning
 try:
     import ble as blemod
-except Exception:
+    BLE_ERROR = None
+except Exception as _e:                 # bleak missing or no bluetooth stack
     blemod = None
+    BLE_ERROR = str(_e)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -25,6 +27,27 @@ FITTED = (1, 2, 3, 4)          # this is a 4-way; slots 5-8 are not populated
 
 clients = []
 clients_lock = threading.Lock()
+
+
+def lan_addresses():
+    """Best-effort list of this machine's LAN IPs, for the phone-friendly URL."""
+    import socket
+    out = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))       # no traffic sent; just picks the route
+        out.append(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip not in out:
+                out.append(ip)
+    except Exception:
+        pass
+    return out
 
 
 def broadcast(obj):
@@ -56,6 +79,7 @@ class App:
         self.ble, self._ble_loop = None, None
         self.scan = {"active": False, "slot": None, "results": [], "index": 0}
         self.seeded_from_timer = False
+        self.ble_error = BLE_ERROR
 
         self.dev = devmod.LapRFDevice(port=port, on_event=self.on_device_event)
         self.race = racemod.Race(on_callout=self.callout, on_change=self.push_state,
@@ -65,6 +89,9 @@ class App:
 
         if blemod:
             self.start_ble()
+        else:
+            self.log_console("[ble] unavailable: " + (BLE_ERROR or "bleak not installed") +
+                             " — install 'bleak' for timer control")
 
     # ---- persistence ----
     def _apply_settings_to_race(self):
@@ -287,6 +314,9 @@ class App:
                 "rfSetup": {str(k): v for k, v in self.dev.rf_setup.items()},
                 "port": self.dev.port, "lastRx": self.dev.last_rx,
                 "ble": bool(self.ble and self.ble.connected),
+                "bleAvailable": blemod is not None,
+                "bleError": self.ble_error,
+                "serial": devmod.HAVE_SERIAL,
                 "canControl": self.can_control(),
             },
             "race": self.race.to_dict(),
@@ -541,11 +571,18 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8080)
-    ap.add_argument("--device", default=None)
-    ap.add_argument("--host", default="127.0.0.1")
+    ap = argparse.ArgumentParser(description="WhoopTimer - LapRF race timing")
+    ap.add_argument("--port", type=int, default=int(os.environ.get("WHOOPTIMER_PORT", 8080)))
+    ap.add_argument("--device", default=None,
+                    help="serial port override; auto-detected by USB id otherwise")
+    ap.add_argument("--host", default=None,
+                    help="bind address (default 127.0.0.1)")
+    ap.add_argument("--lan", action="store_true",
+                    help="bind all interfaces so a phone or tablet on the same "
+                         "network can open it")
+    ap.add_argument("--open", action="store_true", help="open a browser on start")
     a = ap.parse_args()
+    host = a.host or ("0.0.0.0" if a.lan else "127.0.0.1")
 
     app = App(a.device)
     Handler.app = app
@@ -563,7 +600,12 @@ def main():
             time.sleep(0.1)
     threading.Thread(target=ticker, daemon=True).start()
 
-    srv = Server((a.host, a.port), Handler)
+    try:
+        srv = Server((host, a.port), Handler)
+    except OSError as e:
+        print(f"cannot bind {host}:{a.port} — {e}")
+        print("another copy may already be running; try --port 8081")
+        sys.exit(1)
 
     def shutdown(*_):
         """Close the BLE link cleanly. An abrupt kill leaves the timer thinking
@@ -585,7 +627,19 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    print(f"WhoopTimer -> http://{a.host}:{a.port}")
+    say = lambda m: print(m, flush=True)
+    say(f"WhoopTimer -> http://127.0.0.1:{a.port}")
+    if host == "0.0.0.0":
+        for ip in lan_addresses():
+            say(f"            on this network: http://{ip}:{a.port}")
+        say("  (bound to all interfaces — anyone on your network can control the race)")
+    if not blemod:
+        say(f"  ! bluetooth unavailable ({BLE_ERROR}); install 'bleak' for timer control")
+    if not devmod.HAVE_SERIAL:
+        say("  ! pyserial not installed; USB fallback signal disabled")
+    if a.open:
+        threading.Thread(target=lambda: (time.sleep(1.0),
+            __import__("webbrowser").open(f"http://127.0.0.1:{a.port}")), daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -11,12 +11,47 @@ into a single stream of events. The timer may be in either of two modes:
 Callers get the same event shapes either way; `mode` says which is live and
 `can_control` says whether config writes will actually do anything.
 """
-import threading, time, re, queue
-import serial
+import threading, time, re, queue, glob, sys
 import laprf
 
-PORT_DEFAULT = "/dev/serial/by-id/usb-ImmersionRC_ImmersionRC_USB_To_UART_00000000001A-if00"
-FALLBACK_PORT = "/dev/ttyACM0"
+try:
+    import serial
+    from serial.tools import list_ports
+    HAVE_SERIAL = True
+except Exception:                       # pyserial is optional - BLE is the real transport
+    serial = None
+    list_ports = None
+    HAVE_SERIAL = False
+
+# ImmersionRC USB-to-UART bridge (a Microchip CDC part)
+LAPRF_VID, LAPRF_PID = 0x04D8, 0x000A
+
+
+def find_port():
+    """Locate the timer's serial port on any machine.
+
+    Prefers a USB VID/PID match so it works regardless of which /dev node or COM
+    number the OS assigned, then falls back to plausible device names per
+    platform. Returns None when nothing looks like a LapRF - that is fine, since
+    Bluetooth is the primary transport and USB is only a fallback signal source.
+    """
+    if list_ports is not None:
+        ports = list(list_ports.comports())
+        for p in ports:
+            if (p.vid, p.pid) == (LAPRF_VID, LAPRF_PID):
+                return p.device
+        for p in ports:                 # some drivers do not expose vid/pid
+            blob = " ".join(str(x) for x in (p.description, p.manufacturer, p.product))
+            if "immersion" in blob.lower():
+                return p.device
+    if sys.platform.startswith("win"):
+        return None                     # without pyserial we cannot guess a COM port
+    for pattern in ("/dev/serial/by-id/*ImmersionRC*", "/dev/ttyACM*",
+                    "/dev/tty.usbmodem*", "/dev/cu.usbmodem*"):
+        hits = sorted(glob.glob(pattern))
+        if hits:
+            return hits[0]
+    return None
 
 # [199376] status - voltage: 4.091162	noise:	963.00 (0/199)	962.00 (0/199) ...
 ASCII_STATUS = re.compile(r"\[(\d+)\]\s*status\s*-\s*voltage:\s*([\d.]+)\s*noise:\s*(.*)")
@@ -25,7 +60,7 @@ ASCII_SLOT = re.compile(r"([\d.]+)\s*\((\d+)/(\d+)\)")
 
 class LapRFDevice:
     def __init__(self, port=None, on_event=None):
-        self.port = port or PORT_DEFAULT
+        self.port = port or find_port() or ""
         self.on_event = on_event or (lambda e: None)
         self.mode = "disconnected"      # disconnected | ascii | binary
         self.connected = False
@@ -67,13 +102,24 @@ class LapRFDevice:
     # ---- IO thread ----
     def _run(self):
         while not self._stop.is_set():
+            if not HAVE_SERIAL:
+                self.mode = "unavailable"
+                return                      # BLE-only install; nothing to poll
             try:
+                if not self.port:
+                    self.port = find_port() or ""
+                    if not self.port:
+                        raise OSError("no LapRF serial port found")
                 self._ser = serial.Serial(self.port, 115200, timeout=0.15)
                 self._ser.dtr = True
                 self._ser.rts = True
-            except Exception:
+            except Exception as e0:
                 try:
-                    self._ser = serial.Serial(FALLBACK_PORT, 115200, timeout=0.15)
+                    alt = find_port()
+                    if not alt or alt == self.port:
+                        raise e0
+                    self.port = alt
+                    self._ser = serial.Serial(alt, 115200, timeout=0.15)
                     self._ser.dtr = True
                     self._ser.rts = True
                 except Exception as e:

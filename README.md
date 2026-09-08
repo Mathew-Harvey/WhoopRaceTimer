@@ -27,23 +27,71 @@ best, and refuses to write a threshold it can prove will not work.
 
 ## Install
 
-Requires Python 3.9+, a Bluetooth adapter, and an ImmersionRC LapRF.
+Python 3.9+ and a Bluetooth adapter. **Never needs root.**
 
 ```bash
 git clone https://github.com/Mathew-Harvey/WhoopRaceTimer.git
 cd WhoopRaceTimer
-pip install -r requirements.txt        # or: pacman -S python-pyserial python-bleak
-./whooptimer                           # then open http://127.0.0.1:8080
+pip install -r requirements.txt
+./whooptimer
 ```
 
-For spoken callouts on Linux, install `speech-dispatcher` — browsers route the
-Web Speech API through it, and without it `speechSynthesis` fails **silently**:
+On Windows, or if the launcher script is awkward:
+
+```
+python server.py --open
+```
+
+Then open **http://127.0.0.1:8080**.
+
+### Use it from a phone or tablet
+
+The UI is built for a phone as well as a laptop. Bind to the network and open the
+address it prints on any device on the same wifi:
 
 ```bash
-sudo pacman -S speech-dispatcher       # or apt install speech-dispatcher
+./whooptimer --lan
 ```
 
-Restart the browser afterwards; voices are enumerated at startup.
+```
+WhoopTimer -> http://127.0.0.1:8080
+            on this network: http://192.168.1.42:8080
+```
+
+There is no authentication, so anyone on that network can control the race. Fine
+for a club night; do not do it on public wifi.
+
+### Voice callouts
+
+Callouts use the browser's speech synthesis, so they use your system voices and
+need nothing installed — **except on Linux**, where browsers route the Web Speech
+API through `speech-dispatcher`. Without it `speechSynthesis` fails *silently*:
+
+```bash
+sudo apt install speech-dispatcher     # or: pacman -S speech-dispatcher
+```
+
+Restart the browser afterwards — voices are enumerated at startup. The header
+shows a **NO VOICES** chip when the browser reports none, so this failure is
+visible rather than silent.
+
+### Optional: USB fallback signal
+
+Bluetooth is the control transport and needs no special permissions. The USB
+serial port is only a read-only fallback signal source, and the app works fine
+without it. If you want it on Linux and hit a permissions error:
+
+```bash
+sudo cp contrib/99-laprf.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+That grants access to whoever is logged in at the machine — no group changes, no
+logout. Alternatively add yourself to the serial group (`uucp` on Arch, `dialout`
+on Debian/Ubuntu) and log back in.
+
+The serial port is found by USB id, so it works on any machine and any port
+number. Override with `--device /dev/ttyACM0` or `--device COM3` if needed.
 
 ## Connecting
 

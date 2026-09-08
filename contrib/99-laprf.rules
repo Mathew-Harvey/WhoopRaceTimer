@@ -1,0 +1,9 @@
+# ImmersionRC LapRF USB-to-UART bridge.
+# Optional: only needed for the read-only USB fallback signal. Bluetooth, which
+# is how the timer is actually controlled, needs none of this.
+#
+#   sudo cp contrib/99-laprf.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Grants access to anyone logged in at the seat, so no group change or re-login.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="000a", TAG+="uaccess", SYMLINK+="laprf"

@@ -160,5 +160,64 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   check('and both sit clear of the noise', open > quiet + 120, `open ${open}`);
 }
 
+/* ------------------------------------------------- calibration terminates --- */
+/* The failure this guards against was reported from the air: "the pickups kept
+ * getting better and better, but it never said it was completed."
+ *
+ * Every lap on a micro track is flown differently, so there is always a new
+ * worst pass. If the worst pass ever seen defines the gate, each one lands
+ * under the trigger, self-tuning drops the trigger to catch it, and the next
+ * lap produces a weaker one still. Simulate exactly that and require it to
+ * settle. */
+{
+  const quiet = 960;
+  const p = v => ({ peak: v, quiet, counted: true, at: 0 });
+  let threshold = 1600;
+  const passes = [];
+  /* Peaks around 2400 with one steadily worse outlier each lap. */
+  const flown = [2400, 2380, 2410, 2350, 2100, 1900, 2390, 2360, 1750, 2400];
+  let moves = 0;
+  for (const peak of flown) {
+    passes.push(p(peak));
+    for (const q of passes) q.counted = q.peak >= threshold;
+    const r = readiness(passes, threshold, 0.62);
+    if (!r.ready && r.suggest != null && r.worthIt && r.verdict !== 'good') {
+      threshold = r.suggest; moves++;
+      for (const q of passes) q.counted = q.peak >= threshold;
+    }
+  }
+  const final = readiness(passes, threshold, 0.62);
+  check('the gate stops chasing outliers', moves < flown.length,
+        `moved the trigger ${moves} times in ${flown.length} laps`);
+  eq('and reaches calibrated', final.ready, true);
+  check('with the trigger clear of the noise', threshold > quiet + 120, `threshold ${threshold}`);
+  check('and under the passes it is designed for', threshold < final.weakest,
+        `threshold ${threshold} vs weakest ${final.weakest}`);
+}
+
+/* One freak lap does not undo a calibrated gate, but it is still reported. */
+{
+  const quiet = 960;
+  const p = (v, t) => ({ peak: v, quiet, counted: v >= t, at: 0 });
+  const t = 1500;
+  const passes = [2400, 2380, 2410, 2350, 900].map(v => p(v, t));
+  const r = readiness(passes, t, 0.62);
+  eq('the freak lap is counted as missed', r.missed, 1);
+  eq('but not held against the gate', r.realMissed, 0);
+  eq('and it is named as an outlier', r.outliers, 1);
+  eq('so the gate is still calibrated', r.ready, true);
+}
+
+/* With too little evidence, every pass still counts — four laps is not enough
+ * to tell an unusual lap from a badly placed gate. */
+{
+  const quiet = 960;
+  const p = (v, t) => ({ peak: v, quiet, counted: v >= t, at: 0 });
+  const t = 1500;
+  const r = readiness([2400, 2380, 900].map(v => p(v, t)), t, 0.62);
+  eq('a miss among three passes is a real miss', r.realMissed, 1);
+  eq('so it is not calibrated', r.ready, false);
+}
+
 if (failures) { console.error(`\n${failures} failure(s)`); process.exit(1); }
 console.log('calibration flow: all scenarios pass');

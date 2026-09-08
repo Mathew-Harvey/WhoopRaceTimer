@@ -219,6 +219,15 @@ is treated as a tie, broken toward Raceband and then Fatshark because that is
 what whoop and HDZero pilots fly. Every tied name is offered on screen as well:
 the pilot can read the answer off their goggles, which the radio cannot.
 
+When a label and a measurement disagree badly — a quad the goggles call R8,
+5917, reading a thousand counts stronger at E7, 5925 — the channel sweep cannot
+settle it, because between those two labels there is nothing to look at. So
+**Show the real spectrum** walks raw frequencies either side in 2 MHz steps. The
+receiver tunes anywhere it is told, and the shape says where the video actually
+is: a narrow peak is an analog VTX on that frequency, a wide flat hump is a
+digital one spreading across several channels and reading strongly on all of
+them.
+
 The tables themselves are the standard ones — Raceband, Fatshark, and Boscam
 A/B/E — and the band order the LapRF expects is `FREBA`, so Raceband is index 2.
 
@@ -234,6 +243,13 @@ always terminates, unlike demanding that they agree. And when two receivers peak
 in the same moment with one far stronger than the other, that is one quad and a
 room full of bleed-through, not two crossings — the weak one is dropped as
 calibration evidence, though the timer's own lap detection is never touched.
+
+Calibration also has to *finish*. Taking the weakest pass ever flown as the
+level to design for makes a gate chase its own tail: every lap on a micro track
+is flown differently, so there is always a new worst pass, and each one drags
+the trigger down toward the noise. Past five passes the single worst one stops
+setting the level for the others — it is reported as an outlier instead. A bad
+lap is not a bad gate.
 
 **This happens on its own.** Every receiver corrects its own trigger as you fly,
 and the app says "Gate calibrated" out loud once every racing receiver is seeing

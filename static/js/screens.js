@@ -1315,17 +1315,7 @@ SCREENS.findChannel = (app, slot) => {
   /* Every channel sits on the same noise floor, so bars drawn from zero are all
    * full and identical. Scale across the measured range instead: the point of
    * this screen is which channel stands out, not the absolute number. */
-  const draw = results => {
-    const peaks = results.map(r => r.peak);
-    const lo = Math.min(...peaks), hi = Math.max(...peaks);
-    const span = Math.max(1, hi - lo);
-    mount(bars, ...results.map(r => h('div.scanbar',
-      { 'data-top': r.peak === hi && hi - lo > 40 ? '' : null },
-      h('span.nm', r.name),
-      h('span.track', h('i', { style: {
-        width: (4 + ((r.peak - lo) / span) * 96).toFixed(1) + '%' } })),
-      h('span.pk', Math.round(r.peak)))));
-  };
+  const draw = results => drawBars(bars, results);
 
   sheet('Find my channel', close => {
     const start = h('button.go.wide', { onclick: async () => {
@@ -1391,7 +1381,13 @@ SCREENS.findChannel = (app, slot) => {
                        'and any of them will time it.' : ''),
         h('div.act',
           h('button.go', { onclick: use(best.name) }, `Use ${best.name}`),
-          ...alts.map(a => h('button.ghost', { onclick: use(a.name) }, `Use ${a.name}`)))));
+          ...alts.map(a => h('button.ghost', { onclick: use(a.name) }, `Use ${a.name}`)),
+          /* When a label and a measurement disagree, the forty named channels
+           * cannot settle it: there is nothing between R8 at 5917 and E7 at
+           * 5925 to look at. The receiver will tune anywhere, so look at the
+           * gaps and let the shape say where the video actually is. */
+          h('button.ghost', { onclick: () => fineSweep(app, slot, best.freq, status, bars, result) },
+            'Show the real spectrum'))));
     } }, 'Start the scan');
 
     return h('div.stack', status, start, result, bars);
@@ -1525,6 +1521,61 @@ function settingsSheet(app) {
           h('span.pip')),
         h('span.muted', 'On when you launch from the far side of the gate: the first ' +
                         'crossing only starts the clock instead of ending lap 1.')))));
+}
+
+/* Every channel sits on the same noise floor, so bars drawn from zero are all
+ * full and identical. Scale across the measured range instead: the point is
+ * which frequency stands out, not the absolute number. */
+function drawBars(bars, results) {
+  const peaks = results.map(r => r.peak);
+  const lo = Math.min(...peaks), hi = Math.max(...peaks);
+  const span = Math.max(1, hi - lo);
+  mount(bars, ...results.map(r => h('div.scanbar',
+    { 'data-top': r.peak === hi && hi - lo > 40 ? '' : null },
+    h('span.nm', r.name),
+    h('span.track', h('i', { style: {
+      width: (4 + ((r.peak - lo) / span) * 96).toFixed(1) + '%' } })),
+    h('span.pk', Math.round(r.peak)))));
+}
+
+/**
+ * Walk raw frequencies either side of a channel and show the shape.
+ *
+ * A channel sweep answers "which of these forty labels is loudest", which is a
+ * different question from "where is the video". When those two answers
+ * disagree — a quad the goggles call R8, 5917, reading a thousand counts
+ * stronger at E7, 5925 — only the spectrum can say which is right, and the
+ * receiver is perfectly willing to tune to the gaps.
+ */
+async function fineSweep(app, slot, centre, status, bars, result) {
+  const from = Math.max(5600, Math.round(centre) - 24);
+  const to = Math.min(5950, Math.round(centre) + 24);
+  status.textContent = `Sweeping ${from}–${to} MHz in 2 MHz steps…`;
+  const scanner = new ChannelScanner({
+    link: app.link,
+    rfFor: s => ({ ...(app.timer.rfSetup[s] || {}), ...app.rfFor(s) }),
+    sample: s => { const x = app.sig.slots.get(s); return x ? { v: x.value, t: x.lastAt } : null; },
+  });
+  app.scanning = slot;
+  const points = await scanner.sweepRange(slot, from, to, 2, p => {
+    status.textContent = `Sweeping… ${p.index + 1} of ${p.total}`;
+    drawBars(bars, p.results);
+  });
+  app.scanning = null;
+  app.pushConfig([slot], { now: true });
+  drawBars(bars, points);
+  const top = [...points].sort((a, b) => b.peak - a.peak)[0];
+  const named = laprf.channelsByFreq(Number(top.name));
+  status.textContent = '';
+  mount(result, h('div.note', { 'data-tone': 'ok' },
+    h('strong', `Strongest at ${top.name} MHz`),
+    named.length
+      ? `That is exactly ${named.map(c => c.name).join(' / ')}. `
+      : 'That is between named channels — the video is centred there, and the ' +
+        'nearest channel is the one to use. ',
+    'The bars above are the real shape of your signal: a wide, flat hump means a ' +
+    'digital VTX, which spreads across several channels and will read strongly on ' +
+    'more than one of them.'));
 }
 
 function voiceSheet(app) {

@@ -408,7 +408,21 @@ export function passReport(passes, threshold, fraction = PRESETS[DEFAULT_PRESET]
   const counted = passes.filter(p => p.counted).length;
   const missed = seen - counted;
   const peaks = passes.map(p => p.peak).sort((a, b) => a - b);
-  const weakest = peaks[0];
+  /* Not the weakest pass ever flown — the weakest one worth designing for.
+   *
+   * Taking the true minimum makes the gate chase its own tail. Every lap on a
+   * micro track is flown a little differently, so there is always a new worst
+   * pass: it lands under the trigger, self-tuning lowers the trigger to catch
+   * it, and the next lap produces a weaker one still. The gate improves forever
+   * and never arrives — which is exactly what "the pickups kept getting better
+   * but it never said calibrated" is. It also sinks the trigger toward the
+   * noise, which on a small track is how a hovering quad starts inventing laps.
+   *
+   * So once there is enough evidence to tell a bad lap from a bad gate, the
+   * single worst pass stops defining the gate. */
+  const drop = seen >= OUTLIER_MIN_PASSES ? 1 : 0;
+  const weakest = peaks[drop];
+  const outliers = passes.filter(p => p.peak < weakest).length;
   /* The suggestion has to clear the noise as well as sit under the weakest
    * pass, so it is placed between the two rather than just below the peak. A
    * trigger a hair under the weakest pass ever seen counts that pass and
@@ -443,11 +457,15 @@ export function passReport(passes, threshold, fraction = PRESETS[DEFAULT_PRESET]
   const margins = passes.filter(p => p.counted).map(p => p.peak - threshold);
   const thinnest = margins.length ? Math.round(Math.min(...margins) * 10) / 10 : null;
   const span = weakest - quiet;
-  const fragile = missed === 0 && thinnest != null && span > 0 &&
+  /* A pass that missed, but which was weaker than anything the gate is being
+   * designed for, is a bad lap rather than a bad gate. Counting it as a failure
+   * is what kept calibration running forever. */
+  const realMissed = passes.filter(p => !p.counted && p.peak >= weakest).length;
+  const fragile = realMissed === 0 && thinnest != null && span > 0 &&
                   thinnest < span * FRAGILE_FRACTION;
-  const verdict = missed === 0 ? (fragile ? 'fragile' : 'good')
+  const verdict = realMissed === 0 ? (fragile ? 'fragile' : 'good')
                 : counted === 0 ? 'all missed' : 'some missed';
-  return { seen, counted, missed, worstMiss, weakest, suggest, verdict, thinnest,
+  return { seen, counted, missed, realMissed, outliers, worstMiss, weakest, suggest, verdict, thinnest,
            /* Whether the suggestion is worth making at all: an adjustment
             * smaller than this is noise, and rewriting the timer for it would
             * be churn the pilot has to think about for nothing. */
@@ -468,7 +486,11 @@ export function passReport(passes, threshold, fraction = PRESETS[DEFAULT_PRESET]
 export function readiness(passes, threshold, fraction) {
   const rep = passReport(passes, threshold, fraction);
   if (!rep.seen) return { ...rep, ready: false, need: MIN_PASSES, spread: null };
-  const peaks = passes.map(p => p.peak);
+  /* Judged on the passes the gate is designed for, not on the freak laps it has
+   * already decided to ignore. Letting one outlier widen the spread would raise
+   * the evidence bar precisely because a lap was discounted — the same tail
+   * chasing, one step further back. */
+  const peaks = passes.map(p => p.peak).filter(v => v >= (rep.weakest ?? -Infinity));
   const quiet = Math.max(...passes.map(p => p.quiet));
   const mid = [...peaks].sort((a, b) => a - b)[Math.floor(peaks.length / 2)];
   const height = mid - quiet;
@@ -486,6 +508,11 @@ const VIDEO_BW_MHZ = 20;
 const TIE_MARGIN = 0.25;
 /* Which label to prefer when the radio genuinely cannot tell. */
 const BAND_PREFERENCE = ['R', 'F', 'E', 'A', 'B'];
+
+/* Below this many passes there is no way to tell an unusual lap from a badly
+ * placed gate, so every pass counts. At or above it, the single worst one stops
+ * setting the level for all the others. */
+const OUTLIER_MIN_PASSES = 5;
 
 export const MIN_PASSES = 3, MAX_PASSES = 6;
 /* Peaks varying by more than this share of their own height above quiet is a
@@ -562,7 +589,7 @@ export class ChannelScanner {
     this.slot = null;
   }
 
-  async run(slot, onProgress) {
+  async run(slot, onProgress, channels = null) {
     if (this.active) return this.results;
     this.active = true;
     this.slot = slot;
@@ -574,12 +601,16 @@ export class ChannelScanner {
      * still works, just slower, because each channel waits for real samples. */
     this.link.send(laprf.setStatusInterval(200));
     try {
-      for (let i = 0; i < laprf.ALL_CHANNELS.length && this.active; i++) {
+      const points = channels || laprf.ALL_CHANNELS;
+      for (let i = 0; i < points.length && this.active; i++) {
         if (!this.link.connected) { this.lost = true; break; }
-        const ch = laprf.ALL_CHANNELS[i];
-        const { band, channel, frequency } = laprf.channelByName(ch.name);
+        const ch = points[i];
+        /* A named channel carries a band and channel index; a raw frequency
+         * point does not, and the receiver tunes by frequency either way. */
+        const named = ch.name && laprf.BANDS[ch.name[0]] ? laprf.channelByName(ch.name) : null;
         this.link.send(laprf.setRfSetup({
-          slot, band, channel, frequency,
+          slot, band: named?.band ?? 1, channel: named?.channel ?? 1,
+          frequency: named?.frequency ?? ch.freq,
           threshold: cfg.threshold ?? 1600, gain: cfg.gain ?? 58, enabled: true }));
         this.index = i;
         /* Only readings that arrived after the retune say anything about this
@@ -601,7 +632,7 @@ export class ChannelScanner {
         fresh.sort((a, b) => b - a);
         const peak = fresh.length >= 2 ? fresh[1] : (fresh[0] ?? 0);
         this.results.push({ ...ch, peak: Math.round(peak * 10) / 10, samples: fresh.length });
-        onProgress?.({ index: i, total: laprf.ALL_CHANNELS.length, results: this.results });
+        onProgress?.({ index: i, total: points.length, results: this.results });
       }
     } finally {
       this.active = false;
@@ -611,6 +642,24 @@ export class ChannelScanner {
   }
 
   stop() { this.active = false; }
+
+  /**
+   * Sweep a raw frequency range rather than the channel table.
+   *
+   * The forty named channels are not a spectrum: R8 is 5917 and E7 is 5925, and
+   * between them there is nothing to look at, so a channel sweep cannot say
+   * whether a signal is centred on one, centred on the other, or sitting
+   * somewhere between them and lighting up both. A receiver takes any frequency
+   * it is given, so ask it for the gaps too and the actual shape appears.
+   *
+   * This is a diagnostic, not part of racing: it answers "where is the video
+   * really" when a label and a measurement disagree.
+   */
+  async sweepRange(slot, from, to, step = 2, onProgress) {
+    const points = [];
+    for (let f = from; f <= to; f += step) points.push(f);
+    return this.run(slot, onProgress, points.map(f => ({ name: String(f), freq: f })));
+  }
 
   /**
    * The channel a quad is most likely transmitting on.

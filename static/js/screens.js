@@ -182,10 +182,10 @@ SCREENS.connect = app => {
     buttons.appendChild(option(i === 0, glyph, title, sub, kind)));
 
   const notes = h('div.stack.tight');
-  if (dropped && app.race.active) {
+  if (app.race.active) {
     notes.appendChild(h('div.note', { 'data-tone': 'warn' },
-      h('strong', 'A session is still running'),
-      'Reconnect to keep timing from the gate, or press Esc to go back to it — laps by hand ' +
+      h('strong', dropped ? 'A session is still running' : 'A session was restored'),
+      'Connect to keep timing from the gate, or press Esc to go back to it — laps by hand ' +
       '(keys 1–4) count either way.'));
   }
   if (app.connectError) {
@@ -518,10 +518,14 @@ function raceSetup(app) {
           h('input', { value: p.name, 'aria-label': `Pilot ${slot} name`, maxlength: '18',
                        placeholder: `Pilot ${slot}`,
                        onchange: e => app.setPilot(slot, { name: e.target.value.trim() || `Pilot ${slot}` }) }),
-          h('select', { 'aria-label': `Pilot ${slot} channel`, style: { width: 'auto', minWidth: '116px' },
-                        onchange: e => app.setPilot(slot, { channel: e.target.value }) },
-            ...laprf.ALL_CHANNELS.map(c => h('option', { value: c.name, selected: c.name === p.channel },
-              `${c.name} · ${c.freq}`)))),
+          h('div.row', { style: { gap: '6px', flexWrap: 'nowrap' } },
+            h('select', { 'aria-label': `Pilot ${slot} channel`, style: { width: 'auto', minWidth: '116px' },
+                          onchange: e => app.setPilot(slot, { channel: e.target.value }) },
+              ...laprf.ALL_CHANNELS.map(c => h('option', { value: c.name, selected: c.name === p.channel },
+                `${c.name} · ${c.freq}`))),
+            h('button.quiet', { title: `Find pilot ${slot}'s channel by sweeping the receiver`,
+                                'aria-label': `Find pilot ${slot}'s channel`,
+                                onclick: () => SCREENS.findChannel(app, slot) }, icon('radar', 18)))),
         badges[slot] = gateBadge(app, slot));
     }));
   };
@@ -559,23 +563,40 @@ function raceSetup(app) {
   /* 3 — gate check */
   const gateSummary = h('div.stack.tight');
   const drawGate = () => {
-    const racing = app.race.racing;
-    const bad = racing.filter(p => app.health(p.slot).fatal);
-    const untuned = racing.filter(p => app.health(p.slot).level === 'untuned');
+    const racing = app.race.racing.map(p => ({ p, hp: app.health(p.slot) }));
+    const by = level => racing.filter(x => x.hp.level === level);
+    const fatal = racing.filter(x => x.hp.fatal);
+    const shaky = racing.filter(x => !x.hp.fatal && (x.hp.level === 'bad' || x.hp.level === 'warn'));
+    const untuned = by('untuned');
+    const unknown = by('unknown');
     const kids = [];
-    if (bad.length) {
+    const names = xs => xs.map(x => `${x.p.name} (${x.hp.title.toLowerCase()})`).join(', ');
+    if (fatal.length) {
       kids.push(h('div.note', { 'data-tone': 'bad' },
-        h('strong', `${bad.map(p => p.name).join(', ')} cannot detect a lap`),
+        h('strong', `${fatal.map(x => x.p.name).join(', ')} cannot detect a lap`),
         'The trigger level for those receivers sits at or below their own noise, so the ' +
         'timer believes a quad is permanently in the gate. This race will record nothing.',
         h('div.act', h('button.warn', { onclick: () => app.go('gate') }, 'Tune the gate'))));
-    } else if (untuned.length) {
+    }
+    if (shaky.length) {
+      kids.push(h('div.note', { 'data-tone': 'warn' },
+        h('strong', `${plural(shaky.length, 'receiver')} may miss or invent laps`),
+        names(shaky) + '. The gate screen says what to change.',
+        h('div.act', h('button.ghost', { onclick: () => app.go('gate') }, 'Open the gate screen'))));
+    }
+    if (untuned.length) {
       kids.push(h('div.note', { 'data-tone': 'warn' },
         h('strong', `${plural(untuned.length, 'receiver')} never tuned for this track`),
         'They will probably work, but a two-minute tune is the difference between ' +
         'catching every lap and arguing about it later.',
         h('div.act', h('button.ghost', { onclick: () => app.go('gate') }, 'Tune now'))));
-    } else {
+    }
+    if (unknown.length) {
+      kids.push(h('div.note', { 'data-tone': 'warn' },
+        h('strong', 'The timer has not reported its thresholds yet'),
+        'Give it a moment, or reconnect.'));
+    }
+    if (!kids.length) {
       kids.push(h('div.note', { 'data-tone': 'ok' },
         h('strong', 'Gates are tuned'), 'Every racing receiver has measured bounds and a ' +
         'trigger level between them.'));
@@ -807,9 +828,9 @@ SCREENS.gate = app => {
     const action =
       phase === 'idle' ? h('button.go.wide', { onclick: () => {
           app.cal.beginNoise(SLOTS); app.render(); } }, 'Start — keep the gate clear')
-      : phase === 'noise' ? h('button.go.wide', { onclick: () => {
+      : phase === 'noise' ? h('button.go.wide', { disabled: true, onclick: () => {
           app.cal.beginPass(SLOTS); app.render(); } }, 'Quiet measured — now fly a pass')
-      : phase === 'pass' ? h('button.go.wide', { onclick: () => {
+      : phase === 'pass' ? h('button.go.wide', { disabled: true, onclick: () => {
           app.cal.finish(); app.render(); } }, 'Pass flown — show me the numbers')
       : h('div.row',
           h('button.go', { style: { flex: '1' }, onclick: () => applyCalibration(app) },
@@ -817,6 +838,7 @@ SCREENS.gate = app => {
           h('button.ghost', { onclick: () => { app.cal.cancel(); app.render(); } }, 'Start over'));
 
     const evidence = h('p.muted');
+    wizAction = action;
     mount(wizardBox,
       h('div.row', { style: { justifyContent: 'space-between' } },
         h('h3', 'Tune the gate'),
@@ -829,6 +851,7 @@ SCREENS.gate = app => {
       steps, action, evidence);
     return evidence;
   };
+  let wizAction = null;
   let evidence = drawWizard();
 
   /* A receiver that is not racing is not a problem to solve, so it collapses to
@@ -851,10 +874,22 @@ SCREENS.gate = app => {
       const canvas = h('canvas', { width: 600, height: 120 });
       const verdict = h('div.verdict');
       const readout = h('div.readout');
-      const thrInput = h('input', { type: 'number', step: '10', min: '0', max: '4000',
-        value: Math.round(app.rfFor(slot).threshold ?? 0),
-        onchange: e => { app.saveRf(slot, { threshold: Number(e.target.value) });
-                         app.pushConfig([slot], { now: true }); app.markStructural(); } });
+      const thrOf = () => app.rfFor(slot).threshold ?? app.timer.rfSetup[slot]?.threshold ?? null;
+      const thrInput = h('input', { type: 'number', step: '10', min: '1', max: '4000',
+        value: thrOf() == null ? '' : Math.round(thrOf()),
+        placeholder: 'not reported',
+        onchange: e => {
+          const v = Number(e.target.value);
+          if (!e.target.value.trim() || !isFinite(v) || v <= 0) {
+            /* A cleared box is not a request to write zero. */
+            e.target.value = thrOf() == null ? '' : Math.round(thrOf());
+            return;
+          }
+          app.saveRf(slot, { threshold: v });
+          app.pushConfig([slot], { now: true });
+          if (app.race.active) toast('Saved — it reaches the timer when the session ends');
+          app.markStructural();
+        } });
       const card = h('div.gateslot',
         h('header',
           h('span.chanchip', h('span.swatch', { style: { background: idVar(slot) } }),
@@ -888,15 +923,20 @@ SCREENS.gate = app => {
             onchange: e => { app.saveRf(slot, { gain: Number(e.target.value) });
                              app.pushConfig([slot], { now: true }); } }))))),
       h('div.row',
-        h('button.ghost', { onclick: () => SCREENS.findChannel(app, 1) },
+        h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+          h('span.cap', 'Slot'),
+          h('select', { id: 'scanSlot', style: { width: 'auto' } },
+            ...SLOTS.map(s => h('option', { value: s }, String(s))))),
+        h('button.ghost', { onclick: () => SCREENS.findChannel(app, Number(document.getElementById('scanSlot').value)) },
           icon('radar', 18), ' Scan 40 channels'))));
 
+  const gateCoach = h('div.coach');
   mount(wrap,
     h('div.row', { style: { justifyContent: 'space-between' } },
       h('h2', 'Gate & signal'),
       h('button.ghost', { onclick: () => app.go(app.mode === 'solo' ? 'fly' : 'race') },
         'Back to the session')),
-    wizardBox, slotBox, advanced);
+    gateCoach, wizardBox, slotBox, advanced);
 
   let phaseSeen = app.cal.phase;
   let lastDraw = 0;
@@ -906,11 +946,21 @@ SCREENS.gate = app => {
     const paint = performance.now() - lastDraw > 90;
     if (paint) lastDraw = performance.now();
     if (app.cal.phase !== phaseSeen) { phaseSeen = app.cal.phase; evidence = drawWizard(); }
-    const counts = Object.values(app.cal.counts || {});
+    applyCoach(gateCoach, app.coach());
+    /* Samples from the receivers actually racing are what the wizard needs;
+     * an idle slot contributing nothing must not hold the count at zero. */
+    const racingSlots = app.race.racing.map(p => p.slot);
+    const counts = racingSlots.map(s => (app.cal.counts || {})[s] || 0);
     const samples = counts.length ? Math.min(...counts) : 0;
+    const measuring = app.cal.phase === 'noise' || app.cal.phase === 'pass';
+    const enough = samples >= 4;
+    if (wizAction && measuring) wizAction.disabled = !enough || !app.connected;
     evidence.textContent =
-      app.cal.phase === 'noise' ? `Listening… ${samples} samples per receiver. Give it a few seconds.`
-      : app.cal.phase === 'pass' ? `Watching for a peak… ${samples} samples. Fly the gate now.`
+      measuring && !app.connected ? 'Timer link lost — reconnect, then start the measurement again.'
+      : app.cal.phase === 'noise' ? (enough ? `Quiet measured (${samples} samples per receiver). Ready for a pass.`
+                                            : `Listening… ${samples} of 4 samples per receiver.`)
+      : app.cal.phase === 'pass' ? (enough ? `Watching for a peak… ${samples} samples so far. Fly the gate now.`
+                                           : `Waiting for readings… ${samples} of 4.`)
       : app.cal.phase === 'done' ? describeCal(app)
       : '';
     for (const slot of SLOTS) {
@@ -924,8 +974,10 @@ SCREENS.gate = app => {
       }
       const cfg = app.rfFor(slot);
       const sig = app.sig.slots.get(slot);
+      const shownThr = cfg.threshold ?? app.timer.rfSetup[slot]?.threshold ?? null;
       if (document.activeElement !== ref.thrInput) {
-        ref.thrInput.value = Math.round(cfg.threshold ?? 0);
+        const want = shownThr == null ? '' : String(Math.round(shownThr));
+        if (ref.thrInput.value !== want) ref.thrInput.value = want;
       }
       const live = sig?.value ?? 0;
       if (ref.readout._t !== `${Math.round(live)}|${cfg.floor}|${cfg.ceiling}`) {
@@ -937,7 +989,7 @@ SCREENS.gate = app => {
       }
       if (paint) {
         drawMeter(ref.canvas, { live, floor: cfg.floor, ceiling: cfg.ceiling,
-                                threshold: cfg.threshold, series: sig?.series() || [] });
+                                threshold: shownThr, series: sig?.series() || [] });
       }
     }
   };
@@ -949,31 +1001,34 @@ const kv = (label, value) => h('div', h('div.cap', label),
   h('div.num', { style: { fontSize: 'var(--t-17)', fontWeight: '700' } }, String(value)));
 
 function describeCal(app) {
+  const res = app.cal.results();
+  const racing = app.race.racing.map(p => p.slot);
   const usable = app.cal.usable();
-  if (!usable.length) {
-    return 'No receiver produced a big enough gap between quiet and a pass. Move the timer ' +
-           'closer to the gate, or raise gain, and measure again.';
-  }
-  return `${plural(usable.length, 'receiver')} measured cleanly. ` +
-         usable.map(u => `slot ${u.slot} → ${Math.round(u.suggested)}`).join(', ') + '.';
+  const noQuiet = racing.filter(s => res[s]?.floor == null);
+  const noPass = racing.filter(s => res[s]?.floor != null && (res[s]?.ceiling == null || res[s].ceiling <= res[s].floor));
+  const weak = racing.filter(s => res[s]?.floor != null && res[s]?.ceiling != null &&
+                                  res[s].ceiling > res[s].floor && res[s].suggested == null);
+  const bits = [];
+  if (usable.length) bits.push(`${plural(usable.length, 'receiver')} measured cleanly: ` +
+    usable.map(u => `slot ${u.slot} → ${Math.round(u.suggested)}`).join(', ') + '.');
+  if (noQuiet.length) bits.push(`No quiet reading arrived for slot ${noQuiet.join(', ')} — was the timer connected?`);
+  if (noPass.length) bits.push(`No pass was seen on slot ${noPass.join(', ')} — that quad did not cross the gate.`);
+  if (weak.length) bits.push(`Slot ${weak.join(', ')}: the pass barely lifted above quiet. Move the timer closer or raise gain.`);
+  if (!bits.length) bits.push('Nothing was measured. Start again with the timer connected.');
+  return bits.join(' ');
 }
 
 function applyCalibration(app) {
   const usable = app.cal.usable();
-  const res = app.cal.results();
-  for (const [k, v] of Object.entries(res)) {
-    const slot = Number(k);
-    /* Record the measured bounds even when the span was too small to place a
-     * trigger — the verdict then explains why it declined, instead of the app
-     * inventing a number that cannot work. */
-    if (v.floor != null) app.saveRf(slot, { floor: v.floor });
-    if (v.ceiling != null) app.saveRf(slot, { ceiling: v.ceiling });
-    if (v.suggested != null) app.saveRf(slot, { threshold: v.suggested });
-  }
-  if (!usable.length) { toast('Nothing to apply — the pass was not separable', 'err'); return; }
+  /* Only slots that produced a usable measurement change. A receiver whose
+   * quad did not fly the pass keeps last week's good bounds rather than being
+   * downgraded to "too weak" by a measurement that was never made. */
+  for (const u of usable) app.saveRf(u.slot, { floor: u.floor, ceiling: u.ceiling, threshold: u.suggested });
+  if (!usable.length) { toast('Nothing to apply — no receiver saw a separable pass', 'err'); return; }
   if (!app.canControl) { toast('Saved, but there is no control link to write it', 'err'); return; }
   app.pushConfig(usable.map(u => u.slot), { now: true });
-  toast(`Written to ${plural(usable.length, 'receiver')}`, 'ok');
+  if (app.race.active) toast(`Saved for ${plural(usable.length, 'receiver')} — written when the session ends`, 'ok');
+  else toast(`Written to ${plural(usable.length, 'receiver')}`, 'ok');
   app.cal.cancel();
   app.render();
 }
@@ -1065,16 +1120,34 @@ SCREENS.findChannel = (app, slot) => {
       start.disabled = true;
       mount(start, 'Sweeping…');
       status.textContent = 'Sweeping 40 channels…';
-      scanner = new ChannelScanner({ link: app.link, rfFor: s => app.rfFor(s),
-                                     signalFor: s => app.sig.slots.get(s)?.value || 0 });
+      /* Sweeping means the timer will report forty channels for this slot in
+       * a row; none is the pilot's. Say so before the first echo arrives, and
+       * assert the current channel as intent so that if the link drops
+       * mid-sweep a reconnect restores it instead of adopting wherever the
+       * receiver was parked. */
+      app.scanning = slot;
+      if (!app.touched[slot]) { app.touched[slot] = true; store.save('pilotsTouched', app.touched); }
+      scanner = new ChannelScanner({
+        link: app.link,
+        rfFor: s => ({ ...(app.timer.rfSetup[s] || {}), ...app.rfFor(s) }),
+        sample: s => { const x = app.sig.slots.get(s); return x ? { v: x.value, t: x.lastAt } : null; },
+      });
       const results = await scanner.run(slot, p => {
         status.textContent = `Sweeping… ${p.index + 1} of ${p.total}`;
         draw(p.results);
       });
+      app.scanning = null;
       app.pushConfig([slot], { now: true });     // put the slot back where it belongs
-      const best = ChannelScanner.best(results);
       start.disabled = false;
       mount(start, 'Scan again');
+      if (scanner.lost) {
+        status.textContent = 'Timer link lost during the scan.';
+        mount(result, h('div.note', { 'data-tone': 'bad' },
+          h('strong', 'The timer dropped out mid-sweep'),
+          'Power-cycle it and reconnect; your channel is put back automatically. Then scan again.'));
+        return;
+      }
+      const best = ChannelScanner.best(results);
       if (!best || !best.confident) {
         status.textContent = 'No channel stood out.';
         mount(result, h('div.note', { 'data-tone': 'warn' },
@@ -1098,7 +1171,7 @@ SCREENS.findChannel = (app, slot) => {
     } }, 'Start the scan');
 
     return h('div.stack', status, start, result, bars);
-  }, { onClose: () => { scanner?.stop(); app.pushConfig([slot], { now: true }); } });
+  }, { onClose: () => { scanner?.stop(); app.scanning = null; app.pushConfig([slot], { now: true }); } });
 };
 
 /* ============================================================ results ===== */

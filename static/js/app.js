@@ -47,6 +47,7 @@ class App {
 
     this.mode = store.load('mode', null);       // 'solo' | 'race' | null
     this._attempt = 0;                          // connect attempts; a stale one may not adopt
+    this.scanning = null;                       // slot under a channel sweep: its echoes are not intent
     this.screen = 'connect';
     this.view = null;
     this.lastLap = null;            // {slot, n, time, isPb, at} for the hero flash
@@ -66,6 +67,17 @@ class App {
     this.race.configure(this.settings);
     this.restorePilots();
     this.voice.onChange = () => this.markStructural();
+
+    /* A race in progress when the page went away comes back with it. Ten laps
+     * into a first-to-ten is not something anyone wants to fly twice. */
+    const cp = store.load('checkpoint', null);
+    if (cp && cp.state === 'running' && (Date.now() / 1000 - (cp.savedAtEpoch || 0)) < 3 * 3600) {
+      if (this.race.restore(cp)) {
+        this.restored = true;
+        this.recomputeSessionBest();
+        this.screen = this.mode === 'solo' ? 'fly' : 'race';
+      }
+    }
   }
 
   /* ------------------------------------------------------------- lifecycle -- */
@@ -73,6 +85,21 @@ class App {
     document.documentElement.dataset.theme = this.prefs.theme;
     this.render();
     this.loop();
+    if (this.restored) {
+      toast('Race restored after the reload. Reconnect the timer to keep timing from the gate; ' +
+            'laps by hand count meanwhile.', 'ok', 10000);
+    }
+    /* Another tab of this app writing settings must not be overwritten by this
+     * one's stale copy on its next save. */
+    addEventListener('storage', e => {
+      if (!e.key || !e.key.startsWith('wt.')) return;
+      this.rf = store.load('rf', {});
+      this.touched = store.load('pilotsTouched', {});
+      Object.assign(this.settings, store.settings());
+      Object.assign(this.prefs, store.prefs());
+      if (!this.race.active) { this.restorePilots(); this.race.configure(this.settings); }
+      this.markStructural();
+    });
     addEventListener('keydown', e => this.onKey(e));
     /* A rebuild between pointerdown and pointerup detaches the element being
      * pressed, and the browser then never fires the click. Hold rebuilds until
@@ -115,7 +142,10 @@ class App {
       try { ok = await link.reconnectKnown(); } catch (e) { ok = false; }
       if (!this._autoConnect || this.link) {          // a manual connect happened meanwhile
         link.detach();
-        if (ok) link.disconnect().catch(() => {});
+        /* If the manual link is to this same device the GATT connection is
+         * shared — closing it here would drop the link the pilot just made. */
+        const shared = ok && this.link?.kind === 'bluetooth' && this.link.device === link.device;
+        if (ok && !shared) link.disconnect().catch(() => {});
         break;
       }
       if (ok) { this.adoptLink(link, kind); break; }
@@ -124,13 +154,19 @@ class App {
   }
 
   loop() {
+    let lastState = this.race.state;
     const step = () => {
-      this.race.tick();
-      if (this.link?.kind === 'demo') {
-        this.link.syncFlying(this.race.state === 'running' ? this.race.racing.map(p => p.slot) : []);
+      requestAnimationFrame(step);            // schedule first: an error below must not end the loop
+      try {
+        this.race.tick();
+        if (this.race.state !== lastState) { lastState = this.race.state; this.checkpoint(); }
+        if (this.link?.kind === 'demo') {
+          this.link.syncFlying(this.race.state === 'running' ? this.race.racing.map(p => p.slot) : []);
+        }
+        this.view?.update?.(this);
+      } catch (e) {
+        console.error(e);
       }
-      this.view?.update?.(this);
-      requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
     /* requestAnimationFrame stops entirely while a tab is in the background,
@@ -323,6 +359,9 @@ class App {
     };
     const p = this.race.pilots.get(slot);
     if (!p || !rec.frequency) return;
+    /* While a channel sweep drives this slot across all forty channels the
+     * timer echoes each one back; none of them is the pilot's channel. */
+    if (slot === this.scanning) return;
     const mine = laprf.channelByName(p.channel).frequency;
     const wantEnabled = p.enabled;
 
@@ -418,7 +457,14 @@ class App {
   }
 
   saveRf(slot, patch) {
-    Object.assign((this.rf[slot] ||= {}), patch);
+    const cur = (this.rf[slot] ||= {});
+    /* Bounds were measured at a particular gain. Change the gain and the noise
+     * floor and pass peak both move; keeping the old numbers would make the
+     * verdict confidently wrong. */
+    if (patch.gain != null && cur.gain != null && patch.gain !== cur.gain) {
+      delete cur.floor; delete cur.ceiling;
+    }
+    Object.assign(cur, patch);
     store.save('rf', this.rf);
   }
 
@@ -482,6 +528,7 @@ class App {
 
   stop() {
     this.race.stop();
+    this.checkpoint();
     this.wake.release();
     this.flushConfig();          // anything edited mid-race was held back
     this.render();
@@ -489,6 +536,7 @@ class App {
 
   resetRace() {
     this.race.reset();
+    this.checkpoint();
     this.lastLap = null;
     this.sessionBest = null;
     this.wake.release();
@@ -503,6 +551,7 @@ class App {
     toast(r.message, r.ok ? 'ok' : 'err');
     this.recomputeSessionBest();
     this.lastLap = null;
+    this.checkpoint();
     if (r.resumed) { closeSheet(); if (this.prefs.keepAwake) this.wake.request(); }
     this.render();
   }
@@ -513,8 +562,15 @@ class App {
     else toast('Ignored — inside the minimum lap time');
   }
 
+  /** Persist a running race so a reload does not lose it; clear it otherwise. */
+  checkpoint() {
+    if (this.race.state === 'running') store.save('checkpoint', this.race.toCheckpoint());
+    else store.clear('checkpoint');
+  }
+
   onLap({ pilot, n, time, isPb }) {
     this.lastLap = { slot: pilot.slot, n, time, isPb, at: performance.now() };
+    this.checkpoint();
     /* A recorded lap is proof the channel is right, so the app stops asking. */
     if (!store.load('channelPicked', false)) store.save('channelPicked', true);
     if (this.sessionBest == null || time < this.sessionBest) this.sessionBest = time;
@@ -612,13 +668,20 @@ class App {
     const cfg = this.rfFor(slot);
     const hw = this.timer.rfSetup[slot] || {};
     const p = this.race.pilots.get(slot);
-    return tuning.gateHealth({
+    const hp = tuning.gateHealth({
       threshold: cfg.threshold ?? hw.threshold ?? null,
       floor: cfg.floor ?? null,
       ceiling: cfg.ceiling ?? null,
       live: this.sig.quiet(slot),
       enabled: p ? p.enabled : true,
     });
+    /* Config writes wait while a session runs. A verdict that describes a
+     * threshold the timer does not hold yet has to say so. */
+    if (this.race.active && this._dirty.has(slot) && this.canControl) {
+      hp.pending = true;
+      hp.detail += ' This change reaches the timer when the session ends.';
+    }
+    return hp;
   }
 
   /* --------------------------------------------------------------- rendering -- */
@@ -640,7 +703,7 @@ class App {
      * dropped mid-race keeps the race on screen — laps by hand still count and
      * the coach offers the way back — instead of replacing the tower with
      * "switch your timer on". */
-    const build = SCREENS[this.link ? this.screen : 'connect'] || SCREENS.connect;
+    const build = SCREENS[(this.link || this.race.active) ? this.screen : 'connect'] || SCREENS.connect;
     this.view = build(this);
     mount(document.getElementById('main'), this.view.node);
     mount(document.getElementById('topbar'), SCREENS.topbar(this));

@@ -21,7 +21,9 @@
   <header class="topbar" id="topbar"></header>
   <main id="main">
     <div class="screen"><div class="connect"><div class="inner">
-      <div class="searching"><div class="spinner"></div><strong>Starting…</strong></div>
+      <div class="searching"><div class="spinner"></div><strong id="bootMsg">Starting…</strong>
+        <p class="muted" id="bootHint" hidden>The app did not load. Check the connection and reload —
+        if this keeps happening, clear this site's data in the browser.</p></div>
     </div></div></div>
   </main>
 </div>
@@ -44,6 +46,16 @@
   </div>
 </noscript>
 
+<script>
+  /* A silent hang on "Starting…" is the worst possible first impression. */
+  setTimeout(function () {
+    if (!window.wt) {
+      var m = document.getElementById('bootMsg'), h = document.getElementById('bootHint');
+      if (m) m.textContent = 'Still starting…';
+      if (h) h.hidden = false;
+    }
+  }, 9000);
+</script>
 <script type="module" src="js/boot.js"></script>
 </body>
 </html>

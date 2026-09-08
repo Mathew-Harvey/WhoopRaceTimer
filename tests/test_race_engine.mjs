@@ -97,5 +97,22 @@ const solo = r => [2, 3, 4].forEach(s => r.setPilot(s, { enabled: false }));
   ok('empty standings keep slot order', r.standings().map(p => p.slot).join() === '1,2,3,4');
 }
 
+// A countdown noticed late still starts the clock when the count reached zero.
+{
+  const r = mk({ mode: 'practice' }); solo(r);
+  r.arm(5); const deadline = r.stagingUntil - 6; r.stagingUntil = deadline;   // the tab slept through it
+  r.tick();
+  ok('late tick starts at the deadline', r.state === 'running' && Math.abs(r.startedAt - deadline) < 1e-9);
+}
+// A checkpoint restores laps, references and state.
+{
+  const r = mk({ mode: 'laps', targetLaps: 5 }); solo(r);
+  r.startNow(); const t0 = r.startedAt; r.onPassing(1, t0 + 10, 1000); r.onPassing(1, t0 + 22, 13000);
+  const r2 = mk(); ok('restore ok', r2.restore(JSON.parse(JSON.stringify(r.toCheckpoint()))));
+  ok('restored laps', r2.pilots.get(1).laps.map(l => l.time).join() === '10,12');
+  ok('restored state', r2.state === 'running' && r2.runId === r.runId);
+  ok('next lap after restore uses the timer clock', r2.onPassing(1, r2.pilots.get(1).lastPass + 11, 24000) && r2.pilots.get(1).last === 11);
+}
+
 console.log(fails ? `${fails} FAILURES` : 'race engine: all scenarios pass');
 process.exit(fails ? 1 : 0);

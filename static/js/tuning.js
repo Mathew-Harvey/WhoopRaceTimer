@@ -39,7 +39,7 @@ export function quality(floor, ceiling) {
   if (floor == null || ceiling == null) return { verdict: 'unknown', span: null, ratio: 0 };
   const span = ceiling - floor;
   const ratio = floor ? ceiling / floor : 0;
-  const verdict = span < MIN_SPAN ? 'too weak' : span < 400 ? 'marginal' : 'good';
+  const verdict = span <= MIN_SPAN ? 'too weak' : span < 400 ? 'marginal' : 'good';
   return { verdict, span, ratio: Math.round(ratio * 100) / 100 };
 }
 
@@ -54,7 +54,10 @@ export function quality(floor, ceiling) {
  */
 export function gateHealth({ threshold, floor, ceiling, live, enabled = true }) {
   if (!enabled) return { level: 'off', title: 'Not racing', detail: 'This slot is switched off.' };
-  const known = floor ?? live;
+  /* The quiet level is whichever is higher: what was measured, or what the
+   * receiver reports right now. A gate tuned in an empty room and then run
+   * with three other quads powered up has a louder floor than it was tuned at. */
+  const known = (floor == null && live == null) ? null : Math.max(floor ?? -Infinity, live ?? -Infinity);
   if (threshold == null) {
     return { level: 'unknown', title: 'Not measured',
              detail: 'The timer has not told us this slot’s threshold yet.' };
@@ -78,6 +81,12 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true }) 
     }
     const margin = threshold - floor;
     const head = ceiling - threshold;
+    if (head <= 0) {
+      return { level: 'bad', title: 'Trigger is above the strongest pass',
+               detail: `The measured pass peaked at ${fmt(ceiling)}, below the trigger (${fmt(threshold)}), ` +
+                       `so a lap like that one is never counted. Re-apply the wizard, or lower the trigger.`,
+               action: 'tune' };
+    }
     if (head < 80) {
       return { level: 'warn', title: 'Trigger is close to the peak',
                detail: 'Only just below the strongest pass measured — a slightly weaker ' +
@@ -265,12 +274,21 @@ export class SignalBank {
  * answer.
  */
 export class ChannelScanner {
-  constructor({ link, rfFor, signalFor, dwellMs = 420 }) {
+  /**
+   * link     the timer link
+   * rfFor    slot -> {gain, threshold} to keep the receiver at while sweeping
+   * sample   slot -> {v, t} the latest reading and when it arrived
+   * settleMs how long after a retune the first reading is distrusted
+   * maxWaitMs give up on a channel after this long without two fresh samples
+   */
+  constructor({ link, rfFor, sample, settleMs = 120, maxWaitMs = 1800 }) {
     this.link = link;
-    this.rfFor = rfFor;               // slot -> {gain, threshold}
-    this.signalFor = signalFor;       // slot -> current rssi
-    this.dwellMs = dwellMs;
+    this.rfFor = rfFor;
+    this.sample = sample;
+    this.settleMs = settleMs;
+    this.maxWaitMs = maxWaitMs;
     this.active = false;
+    this.lost = false;                // the link dropped mid-sweep
     this.results = [];
     this.index = 0;
     this.slot = null;
@@ -282,26 +300,44 @@ export class ChannelScanner {
     this.slot = slot;
     this.results = [];
     this.index = 0;
+    this.lost = false;
     const cfg = this.rfFor(slot) || {};
+    /* Ask for readings quickly while sweeping; a unit that ignores the request
+     * still works, just slower, because each channel waits for real samples. */
+    this.link.send(laprf.setStatusInterval(200));
     try {
       for (let i = 0; i < laprf.ALL_CHANNELS.length && this.active; i++) {
+        if (!this.link.connected) { this.lost = true; break; }
         const ch = laprf.ALL_CHANNELS[i];
         const { band, channel, frequency } = laprf.channelByName(ch.name);
         this.link.send(laprf.setRfSetup({
           slot, band, channel, frequency,
           threshold: cfg.threshold ?? 1600, gain: cfg.gain ?? 58, enabled: true }));
         this.index = i;
-        const until = performance.now() + this.dwellMs;
-        let peak = 0;
-        while (performance.now() < until && this.active) {
+        /* Only readings that arrived after the retune say anything about this
+         * channel; the previous one's value is still in the register until then.
+         * Two fresh readings are needed, and the lower of the top two is the
+         * answer, so one transient from a quad passing the gate cannot elect a
+         * channel on its own. */
+        const sentAt = Date.now() / 1000 + this.settleMs / 1000;
+        const deadline = performance.now() + this.maxWaitMs;
+        const fresh = [];
+        let lastT = 0;
+        while (performance.now() < deadline && this.active && fresh.length < 2) {
           await new Promise(r => setTimeout(r, 40));
-          peak = Math.max(peak, this.signalFor(slot) || 0);
+          if (!this.link.connected) { this.lost = true; break; }
+          const s = this.sample(slot);
+          if (s && s.t > sentAt && s.t !== lastT) { lastT = s.t; fresh.push(s.v); }
         }
-        this.results.push({ ...ch, peak: Math.round(peak * 10) / 10 });
+        if (this.lost) break;
+        fresh.sort((a, b) => b - a);
+        const peak = fresh.length >= 2 ? fresh[1] : (fresh[0] ?? 0);
+        this.results.push({ ...ch, peak: Math.round(peak * 10) / 10, samples: fresh.length });
         onProgress?.({ index: i, total: laprf.ALL_CHANNELS.length, results: this.results });
       }
     } finally {
       this.active = false;
+      if (this.link.connected) this.link.send(laprf.setStatusInterval(1000));
     }
     return this.results;
   }
@@ -316,13 +352,15 @@ export class ChannelScanner {
    * scan with no quad powered on still returns a confident-looking answer.
    */
   static best(results) {
-    if (!results.length) return null;
-    const sorted = [...results].sort((a, b) => b.peak - a.peak);
-    const peaks = results.map(r => r.peak).sort((a, b) => a - b);
+    const seen = results.filter(r => (r.samples ?? 2) >= 1);
+    if (!seen.length) return null;
+    const sorted = [...seen].sort((a, b) => b.peak - a.peak);
+    const peaks = seen.map(r => r.peak).sort((a, b) => a - b);
     const median = peaks[Math.floor(peaks.length / 2)];
     const top = sorted[0];
     const lift = top.peak - median;
-    return { ...top, median, lift, confident: lift > 150,
+    /* Confidence needs a clear lift AND two readings behind it. */
+    return { ...top, median, lift, confident: lift > 150 && (top.samples ?? 2) >= 2,
              runnerUp: sorted.find(r => Math.abs(r.freq - top.freq) > 20) || sorted[1] || null };
   }
 }

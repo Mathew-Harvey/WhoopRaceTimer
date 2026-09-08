@@ -154,9 +154,12 @@ export class Race {
     this.runId = `${Math.floor(Date.now() / 1000)}-${++runCounter}`;
   }
 
-  _begin() {
+  /** `at` is the moment the clock should read zero. A countdown that ends
+   *  while the tab is throttled is noticed late; the race still started when
+   *  the count reached zero, not when the browser got round to looking. */
+  _begin(at) {
     this.state = 'running';
-    this.startedAt = now();
+    this.startedAt = at ?? now();
     this.stagingUntil = null;
     this.onCallout('Go!', { priority: true });
     this._log('Race started');
@@ -213,7 +216,7 @@ export class Race {
 
   tick() {
     if (this.state === 'staging' && this.stagingUntil) {
-      if (this.stagingUntil - now() <= 0) this._begin();
+      if (this.stagingUntil - now() <= 0) this._begin(this.stagingUntil);
       return;
     }
     if (this.state === 'running' && this.mode === 'time' && this.elapsed >= this.targetSeconds) {
@@ -422,6 +425,56 @@ export class Race {
       standings: this.standings().map(p => p.slot),
       log: this.log.slice(-30),
     };
+  }
+
+  /* ---- checkpoint: a race must survive a reload ----------------------------
+   * Everything is kept relative to the start, and the start is stored as wall
+   * clock, because performance.now() restarts with the page. */
+  toCheckpoint() {
+    if (!this.startedAt) return null;
+    const off = t => (t == null ? null : t - this.startedAt);
+    return {
+      v: 1, runId: this.runId, state: this.state, mode: this.mode, name: this.name,
+      targetLaps: this.targetLaps, targetSeconds: this.targetSeconds, consecN: this.consecN,
+      minLap: this.minLap, holeshot: this.holeshot,
+      startedAtEpoch: Date.now() / 1000 - (now() - this.startedAt),
+      finishedOff: off(this.finishedAt), finishedBy: this.finishedBy,
+      savedAtEpoch: Date.now() / 1000,
+      announced: [...this._announcedLastLap],
+      pilots: [...this.pilots.values()].map(p => ({
+        slot: p.slot, started: p.started, lastRtc: p.lastRtc,
+        awayOff: off(p.awayAt), awayRtc: p.awayRtc, doneOff: off(p.doneAt),
+        laps: p.laps.map(l => ({ n: l.n, time: l.time, off: l.at - this.startedAt, rtc: l.rtc ?? null })),
+      })),
+    };
+  }
+
+  /** Rebuild a race from a checkpoint. Returns false if it cannot be trusted. */
+  restore(cp) {
+    if (!cp || cp.v !== 1 || !cp.startedAtEpoch || !Array.isArray(cp.pilots)) return false;
+    this._clear();
+    this.runId = cp.runId || this.runId;
+    for (const k of ['mode', 'name', 'targetLaps', 'targetSeconds', 'consecN', 'minLap', 'holeshot']) {
+      if (cp[k] != null) this[k] = cp[k];
+    }
+    this.startedAt = now() - (Date.now() / 1000 - cp.startedAtEpoch);
+    const at = off => (off == null ? null : this.startedAt + off);
+    for (const c of cp.pilots) {
+      const p = this.pilots.get(c.slot);
+      if (!p) continue;
+      p.laps = (c.laps || []).map(l => ({ n: l.n, time: l.time, at: this.startedAt + l.off, rtc: l.rtc ?? null }));
+      p.started = !!c.started; p.lastRtc = c.lastRtc ?? null;
+      p.awayAt = at(c.awayOff); p.awayRtc = c.awayRtc ?? null; p.doneAt = at(c.doneOff);
+      const last = p.laps[p.laps.length - 1];
+      p.lastPass = last ? last.at : (this.holeshot ? p.awayAt : null);
+    }
+    this._announcedLastLap = new Set(cp.announced || []);
+    this.state = cp.state === 'running' ? 'running' : 'finished';
+    this.finishedAt = at(cp.finishedOff);
+    this.finishedBy = cp.finishedBy || null;
+    this._log('Race restored after a reload');
+    this.onChange();
+    return true;
   }
 
   /** Plain-English description of the format, for the UI to show verbatim. */

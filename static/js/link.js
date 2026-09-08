@@ -58,7 +58,14 @@ export class LapRFLink {
   /** True once config writes will actually reach the timer. */
   get canControl() { return this.connected && this.mode === 'binary'; }
 
-  setState(patch) { Object.assign(this, patch); this.emit('state', this); }
+  setState(patch) {
+    /* Messages queued for a link that just dropped belong to a conversation
+     * that is over. Replaying them after a reconnect (a scan's channel hops,
+     * say) would drive the timer somewhere nobody asked for. */
+    if (patch.connected === false) this._txq.length = 0;
+    Object.assign(this, patch);
+    this.emit('state', this);
+  }
 
   /** Queue a message. Delivery is serialised and paced by the subclass. */
   send(bytes) {
@@ -166,12 +173,22 @@ export class BleLink extends LapRFLink {
     device.removeEventListener('gattserverdisconnected', this._onDisc);
     device.addEventListener('gattserverdisconnected', this._onDisc);
     const server = await device.gatt.connect();
-    const svc = await server.getPrimaryService(NUS_SERVICE);
-    this.ctrl = await svc.getCharacteristic(NUS_CONTROL);
-    const stream = await svc.getCharacteristic(NUS_STREAM);
-    this._stream?.removeEventListener('characteristicvaluechanged', this._onValue);
-    stream.removeEventListener('characteristicvaluechanged', this._onValue);
-    await stream.startNotifications();
+    let stream;
+    try {
+      const svc = await server.getPrimaryService(NUS_SERVICE);
+      this.ctrl = await svc.getCharacteristic(NUS_CONTROL);
+      stream = await svc.getCharacteristic(NUS_STREAM);
+      this._stream?.removeEventListener('characteristicvaluechanged', this._onValue);
+      stream.removeEventListener('characteristicvaluechanged', this._onValue);
+      await stream.startNotifications();
+    } catch (err) {
+      /* Service discovery failed after the radio link came up. Let go of the
+       * connection, or the timer sits connected-to-nobody and stops
+       * advertising, and the next attempt finds an empty chooser. */
+      device.removeEventListener('gattserverdisconnected', this._onDisc);
+      try { device.gatt.disconnect(); } catch (e) {}
+      throw err;
+    }
     stream.addEventListener('characteristicvaluechanged', this._onValue);
     this._stream = stream;
     this._buf = new Uint8Array(0);

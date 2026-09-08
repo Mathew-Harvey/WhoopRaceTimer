@@ -17,7 +17,9 @@ const SHELL = [
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION)
-    .then(c => c.addAll(SHELL))
+    /* cache: 'reload' bypasses the HTTP cache, so an install cannot mix one
+     * module from the previous deploy with the rest from this one. */
+    .then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' }))))
     .then(() => self.skipWaiting()));
 });
 

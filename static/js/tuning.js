@@ -279,7 +279,7 @@ export class SlotSignal {
    */
   observe(threshold, floor, t) {
     const v = this.value;
-    if (v == null || threshold == null) return null;
+    if (v == null) return null;
     const quiet = floor ?? this.quiet() ?? this.baseline;
     if (quiet == null) return null;
     /* lastAt starts at 0, which is a number and so survives ?? — a fresh slot
@@ -288,8 +288,16 @@ export class SlotSignal {
     t = t ?? (this.lastAt || Date.now() / 1000);
 
     /* Watch from a third of the way up to the trigger, with a floor under it so
-     * a quiet slot does not trip on its own jitter. */
-    const rise = Math.max(WATCH_MIN_RISE, (threshold - quiet) * WATCH_FRACTION);
+     * a quiet slot does not trip on its own jitter.
+     *
+     * A trigger of null is a real state, not a missing argument: some units
+     * answer a setup query with band, channel and frequency and no threshold at
+     * all. That used to stop the watcher dead, so the one case that most needs
+     * calibrating — a receiver nobody has ever set a level on — was the one case
+     * that could not calibrate. With nothing to measure against, watch from a
+     * separable distance above quiet and let the evidence choose the level. */
+    const rise = threshold == null ? MIN_SPAN
+               : Math.max(WATCH_MIN_RISE, (threshold - quiet) * WATCH_FRACTION);
     const enter = quiet + rise;
     const exit = quiet + rise * PASS_EXIT_FRACTION;
 
@@ -305,8 +313,10 @@ export class SlotSignal {
     this._pass = null;
     if (done.peak < enter) return null;
     const pass = { peak: done.peak, at: done.at, quiet,
-                   counted: done.peak >= threshold,
-                   margin: Math.round((done.peak - threshold) * 10) / 10 };
+                   /* Unknown, not false: there is no trigger to have cleared. */
+                   counted: threshold == null ? null : done.peak >= threshold,
+                   margin: threshold == null ? null
+                         : Math.round((done.peak - threshold) * 10) / 10 };
     this.passes.push(pass);
     while (this.passes.length > PASS_HISTORY) this.passes.shift();
     return pass;
@@ -386,6 +396,15 @@ const PASS_HISTORY = 12;
 export function passReport(passes, threshold, fraction = PRESETS[DEFAULT_PRESET].fraction) {
   const seen = passes.length;
   if (!seen) return { seen: 0, counted: 0, missed: 0, verdict: 'none' };
+  /* No trigger yet: every pass is evidence and none of them can be judged.
+   * The only useful answer is where the level belongs. */
+  if (threshold == null) {
+    const q = Math.max(...passes.map(p => p.quiet));
+    const low = Math.min(...passes.map(p => p.peak));
+    const first = low - q > MIN_SPAN ? Math.round((q + (low - q) * fraction) * 10) / 10 : null;
+    return { seen, counted: 0, missed: 0, worstMiss: 0, weakest: low, suggest: first,
+             verdict: 'no trigger', thinnest: null, worthIt: first != null };
+  }
   const counted = passes.filter(p => p.counted).length;
   const missed = seen - counted;
   const peaks = passes.map(p => p.peak).sort((a, b) => a - b);

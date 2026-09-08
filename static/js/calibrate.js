@@ -23,6 +23,10 @@
  * which is the whole basis of RSSI timing indoors. */
 export const CALIBRATION_POWER = '25 milliwatts';
 
+/* Silence this long from a receiver that has never heard anything is a channel
+ * problem, not a patience problem. */
+export const SILENT_S = 25;
+
 export class CalibrationCoach {
   /**
    * @param say   speak a line; the caller decides whether the voice is on
@@ -39,6 +43,7 @@ export class CalibrationCoach {
     this.phase = 'idle';        // idle | briefed | done
     this.saidFor = {};          // slot -> passes already announced
     this.doneSlots = new Set();
+    this.silentSaid = new Set();
     this.lastLine = null;
   }
 
@@ -83,6 +88,22 @@ export class CalibrationCoach {
           `I will calibrate as you go.`
         : `All pilots: set your video transmitters to ${CALIBRATION_POWER}, then fly ` +
           `practice laps until every quad is calibrated.`);
+    }
+
+    /* A receiver that has heard nothing at all is not calibrating slowly, it is
+     * not listening to the right thing — almost always the wrong channel, since
+     * a whoop on R1 is invisible to a receiver sitting on R8. Saying "keep
+     * flying" to someone whose quad cannot be heard is the worst thing this
+     * flow could do, so it says the useful thing instead, once per receiver. */
+    for (const s of slots) {
+      if (s.seen === 0 && s.silentFor > SILENT_S && !this.silentSaid.has(s.slot)) {
+        this.silentSaid.add(s.slot);
+        return this._speak(solo
+          ? 'I am not hearing your quad. Check the channel it transmits on, ' +
+            'or use find my channel.'
+          : `Nothing from ${s.name || 'slot ' + s.slot}. Check that pilot's video channel.`);
+      }
+      if (s.seen > 0) this.silentSaid.delete(s.slot);
     }
 
     /* Per-pilot completion, in a race: the useful progress report is who is

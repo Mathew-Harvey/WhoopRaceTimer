@@ -96,6 +96,28 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   eq('but only once', c.update({ solo: true, slots: [slot(1, 3, 3, false)] }), null);
 }
 
+/* A receiver that has heard nothing is on the wrong channel, not calibrating
+ * slowly. Telling that pilot to keep flying is the worst possible answer. */
+{
+  const { c } = coach();
+  c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 2 }] });
+  eq('patience first', c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 10 }] }), null);
+  const line = c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 40 }] });
+  has('then it names the real problem', line, 'Check the channel');
+  eq('and says it once', c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 60 }] }), null);
+}
+
+/* In a race the silent pilot is named, because three others are flying fine. */
+{
+  const { c } = coach();
+  const grid = sf => [ { ...slot(1, 2, 3, false, 'Ana'), silentFor: 1 },
+                       { ...slot(2, 0, 3, false, 'Bo'), silentFor: sf } ];
+  c.update({ solo: false, slots: grid(1) });
+  const line = c.update({ solo: false, slots: grid(40) });
+  has('the silent pilot is named', line, 'Bo');
+  has('and it is a channel problem', line, 'video channel');
+}
+
 /* Nothing is said to a disconnected timer or an empty grid. */
 {
   const { c } = coach();

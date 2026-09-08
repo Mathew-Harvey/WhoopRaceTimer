@@ -131,7 +131,14 @@ class App {
     /* A rebuild between pointerdown and pointerup detaches the element being
      * pressed, and the browser then never fires the click. Hold rebuilds until
      * the finger comes off — a lap landing mid-tap must not eat the tap. */
-    addEventListener('pointerdown', () => { this._pointerDown = true; this.voice.arm(); }, true);
+    /* Any tap unlocks audio. The beeper goes with the voice: resuming an audio
+     * context is asynchronous, so arming it lazily on the first crossing would
+     * swallow that beep — the one a person is standing at the gate to hear. */
+    addEventListener('pointerdown', () => {
+      this._pointerDown = true;
+      this.voice.arm();
+      this.beeper.arm();
+    }, true);
     for (const ev of ['pointerup', 'pointercancel']) {
       addEventListener(ev, () => {
         this._pointerDown = false;
@@ -461,9 +468,11 @@ class App {
     const last = this._autoAt?.[slot] || 0;
     if (now - last < AUTO_TUNE_GAP_MS) return;
     const sig = this.sig.get(slot);
+    /* A null trigger is the case this matters most for: a receiver the timer
+     * never reported a level for can only ever get one from here. */
     const threshold = this.thresholdFor(slot);
-    if (threshold == null) return;
-    const rep = tuning.passReport(sig.passes, threshold);
+    const rep = tuning.passReport(sig.passes, threshold,
+                                 (tuning.PRESETS[this.settings.preset] || {}).fraction);
     if (rep.seen < AUTO_TUNE_MIN_PASSES || !rep.worthIt) return;
     if (rep.verdict === 'good') return;                 // nothing to fix
     (this._autoAt ||= {})[slot] = now;
@@ -473,6 +482,7 @@ class App {
     toast(`Slot ${slot} tuned itself to ${Math.round(rep.suggest)} — ${
       rep.verdict === 'fragile' ? 'the margin was thin'
       : rep.verdict === 'below noise' ? 'the trigger was under the noise'
+      : rep.verdict === 'no trigger' ? 'it had no level at all'
       : 'passes were being missed'}`, 'ok', 6000);
     this.markStructural();
   }
@@ -505,10 +515,8 @@ class App {
 
   /** How calibrated a receiver is, in the terms the coach and the screen use. */
   readiness(slot) {
-    const th = this.thresholdFor(slot);
     const frac = (tuning.PRESETS[this.settings.preset] || {}).fraction;
-    if (th == null) return { seen: 0, need: tuning.MIN_PASSES, ready: false, verdict: 'none' };
-    return tuning.readiness(this.sig.get(slot).passes, th, frac);
+    return tuning.readiness(this.sig.get(slot).passes, this.thresholdFor(slot), frac);
   }
 
   /** Drive the spoken calibration flow from the evidence as it stands. */
@@ -518,13 +526,22 @@ class App {
      * while muted would spend the one instruction that matters — set 25 mW and
      * fly — on nobody, and it is never said again. */
     if (!this.voice.armed || !this.voice.available) return;
+    /* The clock for "this receiver has heard nothing" starts when the pilot is
+     * first told to fly, not when the page loaded. */
+    this._calibFrom ||= Date.now();
     /* Mid-race is not the time to be told to fly practice laps. */
     if (this.race.state === 'running' || this.race.state === 'staging') return;
     const solo = this.mode === 'solo' || racing.length === 1;
     const line = this.calCoach.update({
       solo,
       connected: this.connected && this.link?.mode !== 'ascii',
-      slots: racing.map(p => ({ slot: p.slot, name: p.name, ...this.readiness(p.slot) })),
+      slots: racing.map(p => ({
+        slot: p.slot, name: p.name, ...this.readiness(p.slot),
+        /* How long this receiver has gone without hearing anything worth
+         * calling a pass, measured from when the briefing was given. */
+        silentFor: (Date.now() - Math.max(this._calibFrom || 0,
+                     (this.sig.get(p.slot).passes.slice(-1)[0]?.at || 0) * 1000)) / 1000,
+      })),
     });
     /* "Timing is live" has to be true when it is said. A solo pilot who has
      * just flown the calibration laps is already in the air; making them land
@@ -613,9 +630,18 @@ class App {
       else continue;
       /* Likewise thresholds and gain: what was measured or set here, else what
        * the timer holds, and only as a last resort a constant. */
+      /* Never invent a trigger. If neither this app nor the timer has a real
+       * value, writing a plausible-looking constant puts a made-up level into
+       * live hardware — and a unit that answers a setup query without a
+       * threshold, which is a real thing some of them do, would have had 1600
+       * written over whatever it was actually using, purely because the app
+       * wanted to flip an enable bit. The slot waits: calibration produces a
+       * measured level within a few laps, and the write happens then. */
+      const threshold = cfg.threshold ?? hw.threshold ?? null;
+      if (threshold == null) continue;
       const want = {
         slot, band: rf.band, channel: rf.channel, frequency: rf.frequency,
-        threshold: Number(cfg.threshold ?? hw.threshold ?? 1600),
+        threshold: Number(threshold),
         gain: Number(cfg.gain ?? hw.gain ?? 58),
         enabled: !!p.enabled };
       /* A write is followed by a read-back, and a read-back that still differs

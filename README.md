@@ -238,23 +238,48 @@ python3 tests/test_protocol_parity.py
 `static/CNAME` (`whooptimer.webfpv.org`) over HTTPS. HTTPS is not optional: Web
 Bluetooth and Web Serial only exist in a secure context.
 
+Two things have to be done once, by hand, before that workflow can succeed:
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.** The
+   workflow token is not permitted to create the Pages site itself, so until
+   this is set the deploy fails on `configure-pages` with a 404.
+2. **The DNS record**, below.
+
 To point a subdomain at it, add one DNS record at your registrar:
 
 ```
 whooptimer.webfpv.org.   CNAME   mathew-harvey.github.io.
 ```
 
-then set the same name under the repository's **Settings → Pages → Custom
-domain** and tick *Enforce HTTPS*. Do the DNS record first: while a `CNAME` file
-is present, Pages redirects the `mathew-harvey.github.io/WhoopRaceTimer` URL to
-the custom domain, so until that name resolves the site is unreachable at either
-address. Delete `static/CNAME` if you want the `github.io` URL back. The apex `webfpv.org` is independent — it can
+On Cloudflare that record **must be grey-cloud (DNS only), not proxied**. GitHub
+has to resolve the name to its own servers to issue the certificate; behind the
+orange cloud it sees Cloudflare's IPs instead, issuance fails, and *Enforce
+HTTPS* stays greyed out — which means no Web Bluetooth and no working app. Once
+the certificate has issued you may switch the proxy on, but then Cloudflare's
+SSL/TLS mode must be **Full (strict)** or Pages and Cloudflare redirect each
+other in a loop.
+
+Then set the same name under **Settings → Pages → Custom domain** and tick
+*Enforce HTTPS* once the DNS check goes green.
+
+Do the DNS record before the first deploy: while a `CNAME` file is present,
+Pages redirects the `mathew-harvey.github.io/WhoopRaceTimer` URL to the custom
+domain, so until that name resolves the site is unreachable at either address.
+Delete `static/CNAME` if you want the `github.io` URL back. The apex `webfpv.org` is independent — it can
 serve a different site from a different repository or host entirely, and each
 extra app gets its own subdomain the same way.
 
-Any static host works: `netlify deploy --dir static`, `vercel deploy static`,
-Cloudflare Pages, or a plain `nginx` root. The only requirements are HTTPS and
-that `sw.js` and `manifest.webmanifest` are served from the site root.
+### Or host it on Cloudflare Pages instead
+
+Workers & Pages → Create → Pages → Connect to Git → this repository. Framework
+preset **None**, build command **empty**, output directory **`static`**, then
+add `whooptimer.webfpv.org` under Custom domains — Cloudflare writes the DNS
+record itself. Delete `static/CNAME` and disable the Pages workflow if you go
+this way, so two hosts are not both claiming the name.
+
+Any static host works: `netlify deploy --dir static`, `vercel deploy static`, or
+a plain `nginx` root. The only requirements are HTTPS and that `sw.js` and
+`manifest.webmanifest` are served from the site root.
 
 ## Protocol notes
 

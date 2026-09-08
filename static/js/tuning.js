@@ -340,6 +340,31 @@ export class SlotSignal {
     return pass;
   }
 
+  /**
+   * Re-judge the passes already seen against a new trigger.
+   *
+   * Moving the trigger does not un-fly the laps. A peak is a physical
+   * measurement of how strong a pass was and stays true whatever the trigger
+   * is set to; only "would this have counted" and "by how much" are relative to
+   * it. Throwing the evidence away on every adjustment is what made calibration
+   * unable to finish: self-tuning would move the trigger at three passes, reset
+   * the count to zero, and the count could never reach three again.
+   */
+  rejudge(threshold) {
+    if (threshold == null) return;
+    for (const p of this.passes) {
+      p.counted = p.peak >= threshold;
+      p.margin = Math.round((p.peak - threshold) * 10) / 10;
+    }
+  }
+
+  /** Forget one pass — used when a stronger receiver shows it was really that
+   *  quad's signal bleeding across, not a crossing on this channel. */
+  dropPass(pass) {
+    const i = this.passes.indexOf(pass);
+    if (i >= 0) this.passes.splice(i, 1);
+  }
+
   /** Forget what was seen — a new trigger deserves a fresh verdict. */
   clearPasses() { this.passes = []; this._pass = null; }
 }
@@ -358,7 +383,7 @@ const PASS_HISTORY = 12;
  * number. This is the whole point of watching: not to time a lap, but to tell
  * someone whether the level they are about to fly a race on is right.
  */
-export function passReport(passes, threshold) {
+export function passReport(passes, threshold, fraction = PRESETS[DEFAULT_PRESET].fraction) {
   const seen = passes.length;
   if (!seen) return { seen: 0, counted: 0, missed: 0, verdict: 'none' };
   const counted = passes.filter(p => p.counted).length;
@@ -370,8 +395,14 @@ export function passReport(passes, threshold) {
    * trigger a hair under the weakest pass ever seen counts that pass and
    * nothing else — the next slightly weaker one is lost. */
   const quiet = Math.max(...passes.map(p => p.quiet));
+  /* Where between quiet and the weakest pass the trigger belongs is a property
+   * of the track, not of the arithmetic. On a micro track — a RaceGOW-sized
+   * room — every quad is near the gate all the time, so the risk that matters
+   * is a phantom lap from a quad hovering nearby, and the trigger sits high. In
+   * an open field the risk is the opposite. That is exactly what the track
+   * preset already says, so it says it here too. */
   const suggest = weakest - quiet > MIN_SPAN
-    ? Math.round((quiet + (weakest - quiet) * 0.55) * 10) / 10
+    ? Math.round((quiet + (weakest - quiet) * fraction) * 10) / 10
     : null;
   const worstMiss = missed
     ? Math.round(Math.min(...passes.filter(p => !p.counted).map(p => threshold - p.peak)) * 10) / 10
@@ -404,6 +435,35 @@ export function passReport(passes, threshold) {
            worthIt: suggest != null && span > 0 &&
                     Math.abs(suggest - threshold) > span * WORTH_FRACTION };
 }
+
+/**
+ * Is this receiver calibrated, and if not, how much more flying is needed?
+ *
+ * Three clean passes settle a gate where every lap looks like the last one. A
+ * micro track is not that: the same quad takes the same gate at a different
+ * height and angle every lap, and three passes that happen to agree can be
+ * three passes that agree by luck. So the evidence required grows with how much
+ * the passes disagree — which always terminates, unlike demanding that they
+ * agree, and which asks for nothing extra on a track where they already do.
+ */
+export function readiness(passes, threshold, fraction) {
+  const rep = passReport(passes, threshold, fraction);
+  if (!rep.seen) return { ...rep, ready: false, need: MIN_PASSES, spread: null };
+  const peaks = passes.map(p => p.peak);
+  const quiet = Math.max(...passes.map(p => p.quiet));
+  const mid = [...peaks].sort((a, b) => a - b)[Math.floor(peaks.length / 2)];
+  const height = mid - quiet;
+  /* How far apart the passes are, as a share of how far above quiet they sit. */
+  const spread = height > 0 ? (Math.max(...peaks) - Math.min(...peaks)) / height : 1;
+  const need = spread > SPREAD_WIDE ? MAX_PASSES : MIN_PASSES;
+  return { ...rep, spread: Math.round(spread * 100) / 100, need,
+           ready: rep.seen >= need && rep.verdict === 'good' };
+}
+
+export const MIN_PASSES = 3, MAX_PASSES = 6;
+/* Peaks varying by more than this share of their own height above quiet is a
+ * track that needs more evidence before anyone calls it calibrated. */
+const SPREAD_WIDE = 0.35;
 
 /* Below this share of the pass's own height above quiet, a margin is thin
  * enough to call fragile rather than good. */

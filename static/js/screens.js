@@ -1030,7 +1030,7 @@ SCREENS.gate = app => {
       const th = app.thresholdFor(p.slot);
       return { p, th, rep: tuning.passReport(app.sig.get(p.slot).passes, th) };
     });
-    const done = states.filter(x => x.rep.verdict === 'good' && x.rep.seen >= 3);
+    const done = states.filter(x => app.readiness(x.p.slot).ready);
     const seenAny = states.some(x => x.rep.seen > 0);
     if (!racing.length) {
       mount(statusBox, h('p.muted', 'No receiver is racing, so there is nothing to calibrate.'));
@@ -1042,13 +1042,21 @@ SCREENS.gate = app => {
         h('p.muted', 'Every racing receiver is seeing clean passes. Nothing here needs touching.'));
       return;
     }
+    /* The same words that are spoken, so someone who heard it and then looked
+     * at the screen finds the instruction they were given rather than a
+     * differently-worded second one. */
+    const solo = app.mode === 'solo' || racing.length === 1;
+    const laps = solo && racing.length
+      ? (r => r.seen ? ` Calibration lap ${Math.min(r.seen, r.need)} of ${r.need}.` : '')(
+          app.readiness(racing[0].slot))
+      : '';
     mount(statusBox,
-      h('h3', 'Calibrating as you fly'),
-      h('p.muted', seenAny
-        ? `${done.length} of ${racing.length} receivers settled. Keep flying — each pass sharpens ` +
-          'the trigger, and the app says out loud when the gate is calibrated.'
-        : 'Fly through the gate. The first few laps set each receiver’s trigger by themselves, ' +
-          'and the app says out loud when it is done.'));
+      h('h3', seenAny ? 'Calibration laps in progress' : 'Set 25 mW, then fly'),
+      h('p.muted', (solo
+        ? `Set your video transmitter to 25 mW and fly through the gate.${laps}`
+        : `Every pilot: 25 mW, then practice laps until all four are calibrated. ` +
+          `${done.length} of ${racing.length} done.`) +
+        ' Nothing to press — the app says out loud when it is calibrated.'));
   };
   drawStatus();
 
@@ -1175,7 +1183,7 @@ function renderPassLine(app, slot, ref, sig, threshold) {
       onclick: () => {
         app.saveRf(slot, { threshold: rep.suggest });
         app.pushConfig([slot], { now: true });
-        sig.clearPasses();          // the old verdicts judged a trigger that is gone
+        sig.rejudge(rep.suggest);   // the laps still count as evidence; the verdicts change
         toast(`Slot ${slot} trigger set to ${Math.round(rep.suggest)} — fly it again to confirm`, 'ok');
         app.markStructural();
       } }, `Use ${Math.round(rep.suggest)}`));

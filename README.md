@@ -179,6 +179,45 @@ the weakest peak counts today and misses on the next flight, when the battery is
 lower or the quad takes the gate a foot wider — so a thin margin reads as
 **fragile** rather than good, with the number it cleared by.
 
+### The whole procedure
+
+Solo:
+
+> **"Set your video transmitter to 25 milliwatts and fly through the gate. I will calibrate as you go."**
+> *"Calibration lap 1 of 3." … "Calibration lap 2 of 3."*
+> **"Calibration complete. Timing is live."**
+
+and the session starts itself, because a pilot who has just flown the
+calibration laps is already in the air and landing to press a button is exactly
+the friction this removes.
+
+A race:
+
+> **"All pilots: set your video transmitters to 25 milliwatts, then fly practice
+> laps until every quad is calibrated."**
+> *"Pilot 1 calibrated. 3 quads to go." … "Pilot 3 calibrated. 1 quad to go."*
+> **"All quads calibrated. Ready to race."**
+
+A race does not start itself — a grid needs a countdown.
+
+25 mW is not a suggestion. On a micro track a hotter transmitter floods every
+receiver in the room, so one quad crossing lifts all four channels and the gate
+can no longer tell whose quad went through. Low power keeps the peak local,
+which is the entire basis of RSSI timing indoors.
+
+### Micro tracks
+
+A RaceGOW-sized room is the hard case, and three things are done for it. The
+track preset decides where between quiet and the weakest pass the trigger sits —
+on a micro track it sits high, because the danger there is a hovering quad
+inventing a lap rather than a weak pass being missed. Passes that disagree buy
+more evidence rather than a coin flip: peaks scattered by more than a third of
+their own height above quiet raise the bar from three clean laps to six, which
+always terminates, unlike demanding that they agree. And when two receivers peak
+in the same moment with one far stronger than the other, that is one quad and a
+room full of bleed-through, not two crossings — the weak one is dropped as
+calibration evidence, though the timer's own lap detection is never touched.
+
 **This happens on its own.** Every receiver corrects its own trigger as you fly,
 and the app says "Gate calibrated" out loud once every racing receiver is seeing
 clean passes. There is no step to perform first and nothing to set up: connect,

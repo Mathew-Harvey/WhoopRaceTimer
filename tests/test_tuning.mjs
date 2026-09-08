@@ -167,11 +167,25 @@ eq('no passes reads as none', passReport([], 1600).verdict, 'none');
  * already sitting where the evidence would put it must not be rewritten to the
  * timer for a rounding difference. */
 {
+  /* Placed where the "normal" preset would put it: quiet 960, weakest 2380,
+   * fraction 0.42 -> 1556. Spelt out rather than inherited from whichever
+   * preset happens to be the default. */
   const { sig } = watch([960, 1500, 2400, 1000, 960,
-                         960, 1400, 2380, 1000, 960], 1741);
-  const r = passReport(sig.passes, 1741);
-  near('the suggestion lands where the trigger already is', r.suggest, 1741, 6);
+                         960, 1400, 2380, 1000, 960], 1556);
+  const r = passReport(sig.passes, 1556, 0.42);
+  near('the suggestion lands where the trigger already is', r.suggest, 1556, 6);
   eq('so the move is not worth making', r.worthIt, false);
+}
+
+/* The same evidence on a micro track wants a higher trigger, because there the
+ * danger is a hovering quad inventing a lap rather than a weak pass being
+ * missed. That is the track preset doing its job through the new path. */
+{
+  const { sig } = watch([960, 1500, 2400, 1000, 960,
+                         960, 1400, 2380, 1000, 960], 1556);
+  const tiny = passReport(sig.passes, 1556, 0.62);
+  check('a micro track moves the trigger up', tiny.suggest > 1556 && tiny.worthIt,
+        `suggested ${tiny.suggest}`);
 }
 
 /* The gate that can never fire. A trigger under the noise means the timer
@@ -186,6 +200,21 @@ eq('no passes reads as none', passReport([], 1600).verdict, 'none');
   eq('a trigger under the noise is not good', r.verdict, 'below noise');
   check('and it is worth fixing', r.worthIt, 'the one gate that must always be fixed was skipped');
   check('the fix is above the noise', r.suggest > 960, `suggested ${r.suggest}`);
+}
+
+/* Moving the trigger must not un-fly the laps. Self-tuning adjusts at three
+ * passes; if that reset the evidence, the count could never reach three again
+ * and calibration would never finish. */
+{
+  const { sig } = watch([960, 1500, 2400, 1000, 960,
+                         960, 1400, 2380, 1000, 960,
+                         960, 1450, 2350, 1000, 960], 3000);
+  eq('three passes seen against a hopeless trigger', sig.passes.length, 3);
+  eq('and none of them counted', passReport(sig.passes, 3000).counted, 0);
+  sig.rejudge(1600);
+  eq('the same three passes survive the move', sig.passes.length, 3);
+  eq('and now all count', passReport(sig.passes, 1600).counted, 3);
+  eq('which is a calibrated gate', passReport(sig.passes, 1600).verdict, 'good');
 }
 
 /* ------------------------------------------- what the timer itself reports --- */

@@ -16,6 +16,7 @@ import { Race } from './race.js';
 import { BleLink, SerialLink, BridgeLink, DemoLink, capabilities, probeBridge } from './link.js';
 import { Voice, Wake, Beeper } from './speech.js';
 import { checkSetup } from './setup.js';
+import { CalibrationCoach } from './calibrate.js';
 import { toast, mount, closeSheet, sheetOpen, confirmSheet } from './ui.js';
 import { SCREENS } from './screens.js';
 
@@ -29,6 +30,10 @@ const MAX_WRITE_TRIES = 3;
  * has this many passes to reason from. */
 const AUTO_TUNE_GAP_MS = 15000, AUTO_TUNE_MIN_PASSES = 3;
 
+/* Two receivers peaking this close together, one this much stronger, is one
+ * quad seen twice — see rejectBleed(). */
+const BLEED_WINDOW_S = 0.6, BLEED_RATIO = 1.25;
+
 class App {
   constructor() {
     this.caps = capabilities();
@@ -36,6 +41,12 @@ class App {
     this.prefs = store.prefs();
     this.voice = new Voice(this.prefs);
     this.beeper = new Beeper(this.prefs);
+    /* Calibration is explained out loud, because nobody at a track is looking
+     * at a phone — they are holding a quad or wearing goggles. */
+    this.calCoach = new CalibrationCoach({
+      say: (line, o) => this.voice.say(line, o),
+      note: line => { this.calLine = line; this.markStructural(); },
+    });
     this.wake = new Wake();
 
     this.link = null;
@@ -196,6 +207,10 @@ class App {
      * so a timed race's end and the start countdown would wait for the pilot
      * to look back at the screen. A timer keeps running there, just slower. */
     setInterval(() => this.race.tick(), 250);
+    /* The brief is an instruction to give before anyone flies, so it cannot
+     * wait for the first pass to arrive. The coach is idempotent and says
+     * nothing the vast majority of the time. */
+    setInterval(() => { try { this.coachCalibration(); } catch (e) { console.error(e); } }, 1500);
   }
 
   /* ------------------------------------------------------------------ link -- */
@@ -322,6 +337,7 @@ class App {
     this.timer = { battery: null, lastRx: 0, rfSetup: {} };
     this._writeTries = {};
     this._calibSaid = false;
+    this.calCoach?.reset();
     /* Nothing is written to the timer just because we connected. The link's
      * hello() asks it to describe itself; adoptRfSetup() then corrects only the
      * slots where our saved intent actually differs. Writing on connect is how
@@ -392,7 +408,7 @@ class App {
             rec.peakHeight ?? null, this.thresholdFor(rec.slot), this.rfFor(rec.slot).floor);
           this.race.onPassing(rec.slot, undefined, rec.rtcTime ?? null);
           this.autoTune(rec.slot);
-          this.announceCalibrated();
+          this.coachCalibration();
         }
         break;
       case 'status':
@@ -421,7 +437,8 @@ class App {
        * the tuning screen can say whether a pass would have counted. A gate set
        * too high otherwise reports nothing at all, which looks exactly like
        * nobody having flown yet. */
-      this.sig.get(slot).observe(this.thresholdFor(slot), this.rfFor(slot).floor);
+      const pass = this.sig.get(slot).observe(this.thresholdFor(slot), this.rfFor(slot).floor);
+      if (pass) this.rejectBleed(slot, pass);
     }
   }
 
@@ -452,7 +469,7 @@ class App {
     (this._autoAt ||= {})[slot] = now;
     this.saveRf(slot, { threshold: rep.suggest });
     this.pushConfig([slot], { now: true });
-    sig.clearPasses();          // the verdicts that follow must judge the new level
+    sig.rejudge(rep.suggest);   // same laps, new level: re-judged, not forgotten
     toast(`Slot ${slot} tuned itself to ${Math.round(rep.suggest)} — ${
       rep.verdict === 'fragile' ? 'the margin was thin'
       : rep.verdict === 'below noise' ? 'the trigger was under the noise'
@@ -461,27 +478,61 @@ class App {
   }
 
   /**
-   * Say when the gate has settled, once.
+   * Throw away a pass that was really another quad's signal bleeding across.
    *
-   * The point of calibrating by flying is that nobody has to watch a screen to
-   * know it worked — so the moment every racing receiver has seen enough passes
-   * to be confident, it is said out loud. Once per connection: a gate that
-   * settles, drifts and settles again is not news the third time.
+   * This is the micro-track problem. In a room the size of a RaceGOW track
+   * every quad is near the gate all the time, and a quad crossing on Raceband 1
+   * lifts the receivers on every other channel too. Those bleed-through
+   * excursions look exactly like passes, and calibrating on them drags a
+   * receiver's trigger down until the slot next to it starts inventing laps.
+   *
+   * Two receivers peaking within the same moment, one far stronger than the
+   * other, is one quad — not two. The strong one is the crossing; the weak one
+   * is the room. Only the weak one is discarded, and only as calibration
+   * evidence: the timer's own lap detection is untouched by any of this.
    */
-  announceCalibrated() {
-    if (this._calibSaid) return;
-    const racing = this.race.racing;
-    if (!racing.length) return;
-    for (const p of racing) {
-      const th = this.thresholdFor(p.slot);
-      if (th == null) return;
-      const rep = tuning.passReport(this.sig.get(p.slot).passes, th);
-      if (rep.seen < AUTO_TUNE_MIN_PASSES || rep.verdict !== 'good') return;
+  rejectBleed(slot, pass) {
+    for (const other of SLOTS) {
+      if (other === slot) continue;
+      const os = this.sig.get(other);
+      for (const q of os.passes) {
+        if (Math.abs(q.at - pass.at) > BLEED_WINDOW_S) continue;
+        if (q.peak >= pass.peak * BLEED_RATIO) { this.sig.get(slot).dropPass(pass); return; }
+        if (pass.peak >= q.peak * BLEED_RATIO) os.dropPass(q);
+      }
     }
-    this._calibSaid = true;
-    this.voice.say('Gate calibrated');
-    toast('Gate calibrated — every receiver is seeing clean passes', 'ok', 6000);
-    this.markStructural();
+  }
+
+  /** How calibrated a receiver is, in the terms the coach and the screen use. */
+  readiness(slot) {
+    const th = this.thresholdFor(slot);
+    const frac = (tuning.PRESETS[this.settings.preset] || {}).fraction;
+    if (th == null) return { seen: 0, need: tuning.MIN_PASSES, ready: false, verdict: 'none' };
+    return tuning.readiness(this.sig.get(slot).passes, th, frac);
+  }
+
+  /** Drive the spoken calibration flow from the evidence as it stands. */
+  coachCalibration() {
+    const racing = this.race.racing;
+    /* Browsers refuse speech before a gesture. Advancing the state machine
+     * while muted would spend the one instruction that matters — set 25 mW and
+     * fly — on nobody, and it is never said again. */
+    if (!this.voice.armed || !this.voice.available) return;
+    /* Mid-race is not the time to be told to fly practice laps. */
+    if (this.race.state === 'running' || this.race.state === 'staging') return;
+    const solo = this.mode === 'solo' || racing.length === 1;
+    const line = this.calCoach.update({
+      solo,
+      connected: this.connected && this.link?.mode !== 'ascii',
+      slots: racing.map(p => ({ slot: p.slot, name: p.name, ...this.readiness(p.slot) })),
+    });
+    /* "Timing is live" has to be true when it is said. A solo pilot who has
+     * just flown the calibration laps is already in the air; making them land
+     * and press start would be the one piece of friction this whole flow
+     * exists to remove. */
+    if (line && solo && this.calCoach.phase === 'done' && !this.race.active) {
+      this.start({ immediate: true });
+    }
   }
 
   /** The trigger this slot is really on: what was chosen here, else what the
@@ -681,7 +732,7 @@ class App {
     this.render();
   }
 
-  start() {
+  start({ immediate = false } = {}) {
     if (!this.race.racing.length) { toast('Switch on at least one pilot first'); return; }
     if (this.race.active) return;
     this.voice.arm();
@@ -705,7 +756,9 @@ class App {
      * channels, enables and the timer's own minimum lap. Config writes are
      * refused once staging begins, so this has to happen now. */
     this.pushConfig(SLOTS, { now: true });
-    if (this.settings.countdown > 0) this.race.arm(); else this.race.startNow();
+    /* A countdown is for a grid of pilots on a line. Timing that begins because
+     * calibration just finished has nobody to count in. */
+    if (this.settings.countdown > 0 && !immediate) this.race.arm(); else this.race.startNow();
     this.render();
   }
 

@@ -315,12 +315,7 @@ class App {
      * app said to the timer was invisible exactly when it was needed. Also kept
      * in a ring buffer — `copy(wt.linkLog())` hands over the lot at a track,
      * where scrolling a console on a phone is not a thing anyone will do. */
-    link.on('log', msg => {
-      const line = new Date().toISOString().slice(11, 23) + ' ' + msg;
-      this._linkLog.push(line);
-      if (this._linkLog.length > 500) this._linkLog.shift();
-      console.log('[link]', msg);
-    });
+    link.on('log', msg => this.logLine(msg));
     return link;
   }
 
@@ -367,6 +362,40 @@ class App {
     this.markStructural();
   }
 
+  logLine(msg) {
+    this._linkLog.push(new Date().toISOString().slice(11, 23) + ' ' + msg);
+    if (this._linkLog.length > 500) this._linkLog.shift();
+    console.log('[link]', msg);
+  }
+
+  /**
+   * Log what the timer says, not only what it is told.
+   *
+   * Every diagnosis so far has been made from outbound frames alone, which is
+   * half a conversation: it can show that the app asked a receiver to listen on
+   * Raceband 8, and cannot show whether the receiver then heard anything, what
+   * level it reported, or whether it considers the slot switched on at all.
+   *
+   * Status records arrive several times a second, so those are summarised once
+   * a second — enough to watch a number climb as a quad approaches, which is
+   * the single most useful thing this can show. Everything else is rare and
+   * printed in full.
+   */
+  logRecord(rec) {
+    if (rec.type === 'status' || rec.type === 'rssi') {
+      const now = Date.now();
+      if (now - (this._rxLoggedAt || 0) < 1000) return;
+      this._rxLoggedAt = now;
+      const per = Object.entries(rec.slots || {})
+        .map(([k, v]) => `s${k}=${v.lastRssi ?? v.meanRssi ?? '—'}`).join(' ');
+      this.logLine(`rx ${rec.type} ${per || '(no slot data)'}` +
+                   (rec.batteryVoltage ? ` batt=${rec.batteryVoltage}` : ''));
+      return;
+    }
+    this.logLine('rx ' + rec.type + ' ' + JSON.stringify(rec, (k, v) =>
+      k === 'slots' && !Object.keys(v || {}).length ? undefined : v));
+  }
+
   /** The last 500 link lines, one per row. `copy(wt.linkLog())` in the console. */
   linkLog() { return this._linkLog.join('\n'); }
 
@@ -401,6 +430,7 @@ class App {
   /* ------------------------------------------------------- inbound records -- */
   onRecord(rec) {
     this.timer.lastRx = Date.now();
+    this.logRecord(rec);
     switch (rec.type) {
       case 'passing':
         if (rec.slot) {
@@ -588,15 +618,21 @@ class App {
         this.race.setPilot(slot, { channel: name });
         this.savePilots();
       }
-      /* Enabled is still ours to decide (solo practice switches the others off). */
-      if (!!rec.enabled !== wantEnabled) this.pushConfig([slot]);
+      /* Enabled is still ours to decide (solo practice switches the others off) —
+       * but only when the timer actually said. A unit that answers a setup query
+       * without an enabled field is not saying "disabled", and reading it that
+       * way meant the app disagreed with the hardware forever: it wrote the slot
+       * on, got the same silent reply back, and wrote it again until the retry
+       * cap stopped it. */
+      if (rec.enabled !== undefined && !!rec.enabled !== wantEnabled) this.pushConfig([slot]);
       else delete this._writeTries[slot];
       return;
     }
     /* The user chose this slot's channel here: that wins — but only now that
      * the timer has said what it holds, and only if it actually differs. */
-    if (mine !== rec.frequency || !!rec.enabled !== wantEnabled) this.pushConfig([slot]);
-    else delete this._writeTries[slot];        // it took: the next change starts fresh
+    if (mine !== rec.frequency || (rec.enabled !== undefined && !!rec.enabled !== wantEnabled)) {
+      this.pushConfig([slot]);
+    } else delete this._writeTries[slot];        // it took: the next change starts fresh
   }
 
   /* ------------------------------------------------------ outbound config -- */

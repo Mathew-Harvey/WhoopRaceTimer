@@ -34,6 +34,11 @@ const QUERY_SLOTS = [1, 2, 3, 4];
  * client sends, and there is nothing here worth saying into that. */
 const HELLO_DELAY_MS = 300;
 
+/* How often the timer should report signal. Fast enough that the peak of a
+ * pass is caught rather than stepped over, which is what calibration measures;
+ * the channel scanner asks for the same rate and the hardware is happy with it. */
+const STATUS_INTERVAL_MS = 200;
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* ---------------------------------------------------------------- base --- */
@@ -137,6 +142,20 @@ export class LapRFLink {
    */
   hello() {
     for (const slot of QUERY_SLOTS) this.send(laprf.getRfSetup(slot));
+    /* And ask it to talk.
+     *
+     * This is the one thing said on connect that is not a question, and it has
+     * to be. A LapRF reports signal only as often as it has been told to, and
+     * "not at all" is a perfectly ordinary thing for it to have been left on —
+     * whereupon every screen that reasons about signal has nothing to reason
+     * about, calibration never sees a pass, and a correctly tuned receiver
+     * listening to the right channel looks exactly like a broken one. It was
+     * only ever asked during a channel scan, which is why a scan could see a
+     * quad that the gate screen could not.
+     *
+     * It is a settings record, not per-slot RF config: it cannot disturb the
+     * frequencies or levels a club has set. */
+    this.send(laprf.setStatusInterval(STATUS_INTERVAL_MS));
   }
 }
 

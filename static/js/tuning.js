@@ -101,10 +101,11 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true }) 
     return { level: 'good', title: q.verdict === 'marginal' ? 'Workable' : 'Tuned',
              detail: `Quiet ${fmt(floor)} · trigger ${fmt(threshold)} · pass peak ${fmt(ceiling)}.` };
   }
-  return { level: 'untuned', title: 'Never tuned',
-           detail: 'Trigger level came from the timer and has not been measured against ' +
-                   'this track. Two minutes here saves a night of missed laps.',
-           action: 'tune' };
+  /* Nothing has been measured here yet, and that is not a chore anyone needs to
+   * be handed. The first laps flown supply the evidence and the trigger moves
+   * itself; the only correct instruction is "fly". */
+  return { level: 'learning', title: 'Calibrating',
+           detail: 'The first few laps set this receiver’s trigger. Just fly.' };
 }
 
 const fmt = v => v == null ? '—' : Math.round(v);
@@ -380,6 +381,15 @@ export function passReport(passes, threshold) {
    * is lower or the quad takes the gate a foot wider — and the failure, when it
    * comes, is the silent kind. So a thin margin is reported as its own verdict
    * rather than being rounded up to "fine". */
+  /* A trigger at or below the quiet level can never fire: the timer believes a
+   * quad is permanently in the gate and so never sees a crossing. Every pass
+   * "clears" it, which is why this has to be caught before the margins are
+   * looked at — by that arithmetic the most broken gate there is reads as the
+   * healthiest one. */
+  if (threshold <= quiet) {
+    return { seen, counted, missed: 0, worstMiss: 0, weakest, suggest,
+             verdict: 'below noise', thinnest: null, worthIt: suggest != null };
+  }
   const margins = passes.filter(p => p.counted).map(p => p.peak - threshold);
   const thinnest = margins.length ? Math.round(Math.min(...margins) * 10) / 10 : null;
   const span = weakest - quiet;

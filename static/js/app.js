@@ -321,6 +321,7 @@ class App {
      * threshold. */
     this.timer = { battery: null, lastRx: 0, rfSetup: {} };
     this._writeTries = {};
+    this._calibSaid = false;
     /* Nothing is written to the timer just because we connected. The link's
      * hello() asks it to describe itself; adoptRfSetup() then corrects only the
      * slots where our saved intent actually differs. Writing on connect is how
@@ -391,6 +392,7 @@ class App {
             rec.peakHeight ?? null, this.thresholdFor(rec.slot), this.rfFor(rec.slot).floor);
           this.race.onPassing(rec.slot, undefined, rec.rtcTime ?? null);
           this.autoTune(rec.slot);
+          this.announceCalibrated();
         }
         break;
       case 'status':
@@ -434,7 +436,9 @@ class App {
    */
   autoTune(slot) {
     const cfg = this.rfFor(slot);
-    if (!cfg.auto || !this.canControl) return;
+    /* On unless switched off. Calibration is the app's job, not a task to hand
+     * someone standing at a gate holding a quad. */
+    if (cfg.auto === false || !this.canControl) return;
     if (this.race.state === 'running' || this.race.state === 'staging') return;
     const now = Date.now();
     const last = this._autoAt?.[slot] || 0;
@@ -449,8 +453,34 @@ class App {
     this.saveRf(slot, { threshold: rep.suggest });
     this.pushConfig([slot], { now: true });
     sig.clearPasses();          // the verdicts that follow must judge the new level
-    toast(`Slot ${slot} tuned itself to ${Math.round(rep.suggest)} — ${rep.verdict === 'fragile'
-      ? 'the margin was thin' : 'passes were being missed'}`, 'ok', 6000);
+    toast(`Slot ${slot} tuned itself to ${Math.round(rep.suggest)} — ${
+      rep.verdict === 'fragile' ? 'the margin was thin'
+      : rep.verdict === 'below noise' ? 'the trigger was under the noise'
+      : 'passes were being missed'}`, 'ok', 6000);
+    this.markStructural();
+  }
+
+  /**
+   * Say when the gate has settled, once.
+   *
+   * The point of calibrating by flying is that nobody has to watch a screen to
+   * know it worked — so the moment every racing receiver has seen enough passes
+   * to be confident, it is said out loud. Once per connection: a gate that
+   * settles, drifts and settles again is not news the third time.
+   */
+  announceCalibrated() {
+    if (this._calibSaid) return;
+    const racing = this.race.racing;
+    if (!racing.length) return;
+    for (const p of racing) {
+      const th = this.thresholdFor(p.slot);
+      if (th == null) return;
+      const rep = tuning.passReport(this.sig.get(p.slot).passes, th);
+      if (rep.seen < AUTO_TUNE_MIN_PASSES || rep.verdict !== 'good') return;
+    }
+    this._calibSaid = true;
+    this.voice.say('Gate calibrated');
+    toast('Gate calibrated — every receiver is seeing clean passes', 'ok', 6000);
     this.markStructural();
   }
 
@@ -805,19 +835,23 @@ class App {
     const fatal = this.race.racing.filter(p => this.health(p.slot).fatal);
     if (fatal.length) {
       const who = fatal.length === 1 ? fatal[0].name : `${fatal.length} receivers`;
-      return { tone: 'bad', text: `${who} can never detect a lap — the trigger level is below the noise.`,
-               action: { label: 'Fix the gate', fn: () => { this.screen = 'gate'; this.render(); } } };
+      return { tone: 'bad',
+               text: `${who} can never detect a lap — the trigger sits below the noise. ` +
+                     'Fly one lap and it corrects itself.',
+               action: { label: 'Watch it', fn: () => { this.screen = 'gate'; this.render(); } } };
     }
     if (this.race.state === 'idle') {
       if (this.mode === 'solo' && !store.load('channelPicked', false)) {
         return { tone: 'warn', text: 'Set the channel your quad transmits video on.',
                  action: { label: 'Find it for me', fn: () => SCREENS.findChannel(this, 1) } };
       }
-      const untuned = this.race.racing.filter(p => this.health(p.slot).level === 'untuned');
-      if (untuned.length && untuned.length === this.race.racing.length) {
-        return { tone: 'warn',
-                 text: 'Gates have never been tuned for this track. Two minutes now saves missed laps.',
-                 action: { label: 'Tune', fn: () => { this.screen = 'gate'; this.render(); } } };
+      const learning = this.race.racing.filter(p => this.health(p.slot).level === 'learning');
+      if (learning.length && learning.length === this.race.racing.length) {
+        /* Deliberately not a warning and deliberately without an action: there
+         * is nothing for anyone to do here but fly, and offering a button
+         * implies otherwise. */
+        return { tone: 'ok',
+                 text: 'Start flying — the first few laps calibrate the gate on their own.' };
       }
     }
     switch (this.race.state) {

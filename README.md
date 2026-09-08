@@ -179,10 +179,18 @@ the weakest peak counts today and misses on the next flight, when the battery is
 lower or the quad takes the gate a foot wider — so a thin margin reads as
 **fragile** rather than good, with the number it cleared by.
 
-Switch **Auto** on for a receiver and it corrects its own trigger as you fly. It
-is deliberately timid: three passes of evidence before it moves, never during a
-race, never for a change too small to matter, at most once every fifteen
-seconds, and it says so every time it does.
+**This happens on its own.** Every receiver corrects its own trigger as you fly,
+and the app says "Gate calibrated" out loud once every racing receiver is seeing
+clean passes. There is no step to perform first and nothing to set up: connect,
+fly, and the first few laps do it. Self-tuning is deliberately timid — three
+passes of evidence before it moves, never during a race, never for a change too
+small to matter, at most once every fifteen seconds, and it says so every time.
+
+Switch **Auto** off for a receiver to keep a trigger you set by hand. The
+step-by-step calibration is still there too, under **Advanced** on the gate
+screen: quiet, then one flown pass, then a trigger between them. It is
+occasionally the right tool — a track where nobody wants to fly a lap to find
+out — but it is no longer the way in.
 
 ### Hearing the gate
 

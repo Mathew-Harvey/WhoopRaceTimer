@@ -73,8 +73,9 @@ function connectionSheet(app) {
             'Use Bluetooth for timing.'
           : `Talking to the timer over ${l.kind === 'bluetooth' ? 'Bluetooth' :
              l.kind === 'usb' ? 'USB' : l.kind === 'demo' ? 'a simulator' : 'the local bridge'}.`));
-      const tuned = SLOTS.filter(s => app.rfFor(s).floor != null).length;
-      rows.push(h('p.muted', `${plural(tuned, 'receiver')} tuned for this track.`));
+      const ready = SLOTS.filter(s => app.health(s).level === 'good').length;
+      rows.push(h('p.muted', ready === SLOTS.length ? 'Gate calibrated.'
+                                                    : `${ready} of ${SLOTS.length} receivers calibrated.`));
       rows.push(h('button.ghost.wide', { onclick: () => { close(); app.disconnect(); } },
         'Disconnect'));
     } else {
@@ -90,7 +91,7 @@ function menuSheet(app) {
     h('div.ico', icon(glyph, 22)), h('div', h('strong', label), sub && h('small', sub)),
     h('div.chev', icon('chev', 18)));
   sheet('WhoopTimer', close => h('div.stack.tight',
-    item('target', 'Gate & signal', 'Tune what counts as a lap',
+    item('target', 'Gate & signal', 'What counts as a lap',
          () => { close(); app.go('gate'); }),
     item('list', 'History', 'Saved sessions and export', () => { close(); app.go('history'); }),
     item('clock', 'Race settings', 'Countdown, minimum lap, holeshot',
@@ -403,7 +404,7 @@ SCREENS.fly = app => {
 
     const hp = app.health(1);
     gatePill.dataset.tone = hp.level === 'good' ? 'ok' : hp.level === 'fatal' || hp.level === 'bad'
-      ? 'bad' : hp.level === 'warn' || hp.level === 'untuned' ? 'warn' : '';
+      ? 'bad' : hp.level === 'warn' ? 'warn' : '';
     /* On a phone the gate chip costs a whole row, so it only appears when it
      * has something to warn about. A tuned gate needs no badge. */
     gatePill.hidden = narrow() && hp.level === 'good';
@@ -627,7 +628,7 @@ function raceSetup(app) {
     const by = level => racing.filter(x => x.hp.level === level);
     const fatal = racing.filter(x => x.hp.fatal);
     const shaky = racing.filter(x => !x.hp.fatal && (x.hp.level === 'bad' || x.hp.level === 'warn'));
-    const untuned = by('untuned');
+    const learning = by('learning');
     const unknown = by('unknown');
     const kids = [];
     const names = xs => xs.map(x => `${x.p.name} (${x.hp.title.toLowerCase()})`).join(', ');
@@ -635,8 +636,9 @@ function raceSetup(app) {
       kids.push(h('div.note', { 'data-tone': 'bad' },
         h('strong', `${fatal.map(x => x.p.name).join(', ')} cannot detect a lap`),
         'The trigger level for those receivers sits at or below their own noise, so the ' +
-        'timer believes a quad is permanently in the gate. This race will record nothing.',
-        h('div.act', h('button.warn', { onclick: () => app.go('gate') }, 'Tune the gate'))));
+        'timer believes a quad is permanently in the gate. Fly one lap and the app will ' +
+        'correct it; until then this race records nothing.',
+        h('div.act', h('button.ghost', { onclick: () => app.go('gate') }, 'Watch it happen'))));
     }
     if (shaky.length) {
       kids.push(h('div.note', { 'data-tone': 'warn' },
@@ -644,12 +646,13 @@ function raceSetup(app) {
         names(shaky) + '. The gate screen says what to change.',
         h('div.act', h('button.ghost', { onclick: () => app.go('gate') }, 'Open the gate screen'))));
     }
-    if (untuned.length) {
-      kids.push(h('div.note', { 'data-tone': 'warn' },
-        h('strong', `${plural(untuned.length, 'receiver')} never tuned for this track`),
-        'They will probably work, but a two-minute tune is the difference between ' +
-        'catching every lap and arguing about it later.',
-        h('div.act', h('button.ghost', { onclick: () => app.go('gate') }, 'Tune now'))));
+    if (learning.length) {
+      /* Not a warning and not a task: the first laps do this by themselves. It
+       * is here only so the state is not a mystery. */
+      kids.push(h('div.note',
+        h('strong', `${plural(learning.length, 'receiver')} still calibrating`),
+        'Fly as normal — the first few laps set the trigger, and the app says when ' +
+        'it has settled.'));
     }
     if (unknown.length) {
       kids.push(h('div.note', { 'data-tone': 'warn' },
@@ -658,8 +661,7 @@ function raceSetup(app) {
     }
     if (!kids.length) {
       kids.push(h('div.note', { 'data-tone': 'ok' },
-        h('strong', 'Gates are tuned'), 'Every racing receiver has measured bounds and a ' +
-        'trigger level between them.'));
+        h('strong', 'Gate calibrated'), 'Every racing receiver is seeing clean passes.'));
     }
     mount(gateSummary, ...kids);
   };
@@ -852,6 +854,7 @@ SCREENS.gate = app => {
   node.appendChild(h('div.scroller', wrap));
 
   const wizardBox = h('div.card.stack');
+  const statusBox = h('div.card.stack');
   const slotBox = h('div.stack');
   const advanced = h('details.card', { open: app.gateAdvancedOpen || null,
     ontoggle: e => { app.gateAdvancedOpen = e.target.open; } });
@@ -903,13 +906,14 @@ SCREENS.gate = app => {
     wizAction = action;
     mount(wizardBox,
       h('div.row', { style: { justifyContent: 'space-between' } },
-        h('h3', 'Tune the gate'),
+        h('h3', 'Calibrate by hand'),
         h('div', { style: { display: 'grid', gap: '4px', justifyItems: 'end' } },
           h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
             h('span.cap', 'Track'), presetSel),
           presetHint)),
-      h('p.muted', 'A pass is a lap only when the signal climbs past a trigger level. Set ' +
-                   'it under the noise and the timer never sees a crossing at all.'),
+      h('p.muted', 'Not normally needed — flying calibrates the gate on its own. This measures ' +
+                   'the same thing deliberately: the quiet level, then one flown pass, then a ' +
+                   'trigger set between them.'),
       steps, action, evidence);
     return evidence;
   };
@@ -959,14 +963,18 @@ SCREENS.gate = app => {
             h('span.name', p.channel),
             h('span.freq', `slot ${slot}`)),
           h('label.trig', h('span.cap', 'Trigger'), thrInput),
-          h('button.autotune', { 'aria-pressed': String(!!app.rfFor(slot).auto),
+          /* Unset means on — the same rule autoTune applies. Reading it as off
+           * because undefined is falsy would show every receiver switched off
+           * while it was quietly tuning itself, which is worse than either
+           * state being wrong. */
+          h('button.autotune', { 'aria-pressed': String(app.rfFor(slot).auto !== false),
             title: 'Let this receiver correct its own trigger as you fly',
             onclick: e => {
-              const on = !app.rfFor(slot).auto;
+              const on = app.rfFor(slot).auto === false;
               app.saveRf(slot, { auto: on });
               e.currentTarget.setAttribute('aria-pressed', String(on));
               toast(on ? `Slot ${slot} will correct itself as you fly`
-                       : `Slot ${slot} left alone`, 'ok');
+                       : `Slot ${slot} will keep the trigger you set`, 'ok');
             } }, 'Auto')),
         verdict, canvas, readout, passLine);
       slotBox.appendChild(card);
@@ -1000,7 +1008,49 @@ SCREENS.gate = app => {
           h('select', { id: 'scanSlot', style: { width: 'auto' } },
             ...SLOTS.map(s => h('option', { value: s }, String(s))))),
         h('button.ghost', { onclick: () => SCREENS.findChannel(app, Number(document.getElementById('scanSlot').value)) },
-          icon('radar', 18), ' Scan 40 channels'))));
+          icon('radar', 18), ' Scan 40 channels')),
+      /* The step-by-step calibration lives here now rather than at the top of
+       * the screen. It still works and is still occasionally the right tool —
+       * a track where nobody wants to fly a lap to find out — but leading with
+       * it told everyone they had a job to do before they could fly, which was
+       * never true and is no longer true at all. */
+      h('hr', { style: { border: '0', borderTop: '1px solid var(--line)', margin: '4px 0' } }),
+      wizardBox));
+
+  /**
+   * The state of the gate in one sentence, and never an instruction.
+   *
+   * This replaced a three-step wizard at the top of the screen. The wizard told
+   * everyone who opened it that they had a job to do before they could fly,
+   * which stopped being true when the trigger learned to correct itself.
+   */
+  const drawStatus = () => {
+    const racing = app.race.racing;
+    const states = racing.map(p => {
+      const th = app.thresholdFor(p.slot);
+      return { p, th, rep: tuning.passReport(app.sig.get(p.slot).passes, th) };
+    });
+    const done = states.filter(x => x.rep.verdict === 'good' && x.rep.seen >= 3);
+    const seenAny = states.some(x => x.rep.seen > 0);
+    if (!racing.length) {
+      mount(statusBox, h('p.muted', 'No receiver is racing, so there is nothing to calibrate.'));
+      return;
+    }
+    if (done.length === racing.length) {
+      mount(statusBox,
+        h('h3', 'Gate calibrated'),
+        h('p.muted', 'Every racing receiver is seeing clean passes. Nothing here needs touching.'));
+      return;
+    }
+    mount(statusBox,
+      h('h3', 'Calibrating as you fly'),
+      h('p.muted', seenAny
+        ? `${done.length} of ${racing.length} receivers settled. Keep flying — each pass sharpens ` +
+          'the trigger, and the app says out loud when the gate is calibrated.'
+        : 'Fly through the gate. The first few laps set each receiver’s trigger by themselves, ' +
+          'and the app says out loud when it is done.'));
+  };
+  drawStatus();
 
   const gateCoach = h('div.coach');
   mount(wrap,
@@ -1008,7 +1058,7 @@ SCREENS.gate = app => {
       h('h2', 'Gate & signal'),
       h('button.ghost', { onclick: () => app.go(app.mode === 'solo' ? 'fly' : 'race') },
         'Back to the session')),
-    gateCoach, wizardBox, slotBox, advanced);
+    gateCoach, statusBox, slotBox, advanced);
 
   let phaseSeen = app.cal.phase;
   let lastDraw = 0;
@@ -1018,6 +1068,7 @@ SCREENS.gate = app => {
     const paint = performance.now() - lastDraw > 90;
     if (paint) lastDraw = performance.now();
     if (app.cal.phase !== phaseSeen) { phaseSeen = app.cal.phase; evidence = drawWizard(); }
+    if (paint) drawStatus();
     { const c = app.coach(); gateCoach.hidden = c.tone === 'ok'; if (!gateCoach.hidden) applyCoach(gateCoach, c); }
     /* Samples from the receivers actually racing are what the wizard needs;
      * an idle slot contributing nothing must not hold the count at zero. */
@@ -1039,7 +1090,13 @@ SCREENS.gate = app => {
       const ref = slotCards.get(slot);
       if (!ref) continue;
       const hp = app.health(slot);
-      if (ref.verdict._t !== hp.title + hp.detail) {
+      /* A slot that is merely still learning says so at the top of the screen
+       * already, and the live line under its meter says it again with real
+       * numbers. Repeating it a third time per receiver was the bulk of what
+       * made this screen look like a job. Problems still speak up. */
+      const quietVerdict = hp.level === 'learning' || hp.level === 'good';
+      ref.verdict.hidden = quietVerdict;
+      if (!quietVerdict && ref.verdict._t !== hp.title + hp.detail) {
         ref.verdict._t = hp.title + hp.detail;
         ref.verdict.dataset.level = hp.level;
         mount(ref.verdict, h('strong', hp.title), h('span', hp.detail));
@@ -1052,12 +1109,20 @@ SCREENS.gate = app => {
         if (ref.thrInput.value !== want) ref.thrInput.value = want;
       }
       const live = sig?.value ?? 0;
-      if (ref.readout._t !== `${Math.round(live)}|${cfg.floor}|${cfg.ceiling}`) {
-        ref.readout._t = `${Math.round(live)}|${cfg.floor}|${cfg.ceiling}`;
+      /* Both of these used to read "not measured" until someone ran the wizard,
+       * which is a way of saying "you have not done your homework" on a screen
+       * that no longer sets any. Quiet is observed continuously, and the peak of
+       * the last real pass is known the moment one is flown. */
+      const quiet = cfg.floor ?? sig?.quiet() ?? null;
+      const lastPass = sig?.passes?.length ? sig.passes[sig.passes.length - 1].peak
+                                           : (cfg.ceiling ?? null);
+      const key = `${Math.round(live)}|${Math.round(quiet ?? -1)}|${Math.round(lastPass ?? -1)}`;
+      if (ref.readout._t !== key) {
+        ref.readout._t = key;
         mount(ref.readout,
           kv('Live', app.sig.live(slot) ? Math.round(live) : '—'),
-          kv('Quiet', cfg.floor == null ? 'not measured' : Math.round(cfg.floor)),
-          kv('Pass peak', cfg.ceiling == null ? 'not measured' : Math.round(cfg.ceiling)));
+          kv('Quiet', quiet == null ? '—' : Math.round(quiet)),
+          kv('Last pass', lastPass == null ? 'none yet' : Math.round(lastPass)));
       }
       renderPassLine(app, slot, ref, sig, shownThr);
       if (paint) {

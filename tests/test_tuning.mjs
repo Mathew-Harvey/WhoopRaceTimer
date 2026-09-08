@@ -174,6 +174,20 @@ eq('no passes reads as none', passReport([], 1600).verdict, 'none');
   eq('so the move is not worth making', r.worthIt, false);
 }
 
+/* The gate that can never fire. A trigger under the noise means the timer
+ * thinks a quad is permanently in the gate and never sees a crossing — so no
+ * lap is ever reported. By raw margin arithmetic every pass clears it, which
+ * made the most broken gate possible read as the healthiest. */
+{
+  const { sig } = watch([960, 1500, 2400, 1000, 960,
+                         960, 1400, 2380, 1000, 960,
+                         960, 1450, 2350, 1000, 960], 700);
+  const r = passReport(sig.passes, 700);
+  eq('a trigger under the noise is not good', r.verdict, 'below noise');
+  check('and it is worth fixing', r.worthIt, 'the one gate that must always be fixed was skipped');
+  check('the fix is above the noise', r.suggest > 960, `suggested ${r.suggest}`);
+}
+
 /* ------------------------------------------- what the timer itself reports --- */
 /* The LapRF measures each pass peak in firmware. It is the only fully
  * trustworthy peak we ever see, and it used to be decoded and dropped. */

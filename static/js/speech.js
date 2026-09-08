@@ -29,15 +29,45 @@ export class Voice {
     if (was !== this.available) this.onChange();
   }
 
+  /* A track has no internet. Chrome's default English voices are network
+   * voices that simply say nothing offline, so a voice that lives on the
+   * device wins over a nicer one that does not. */
+  _rank(v) {
+    return (v.localService ? 0 : 2) + (/en[-_]?(GB|AU|US|NZ)/i.test(v.lang) ? 0 : 1);
+  }
+
   get voice() {
     const named = this.voices.find(v => v.name === this.prefs.voiceName);
     if (named) return named;
-    /* A track has no internet. Chrome's default English voices are network
-     * voices that simply say nothing offline, so a voice that lives on the
-     * device wins over a nicer one that does not. */
+    /* Memoised: a Linux browser wired to speech-dispatcher offers close to
+     * fifteen thousand voices, and this used to be re-sorted for every single
+     * callout — during a race, on the lap that just finished. */
+    const key = this.voices.length + '|' + (this.prefs.voiceName || '');
+    if (this._bestKey !== key) {
+      this._bestKey = key;
+      const en = this.voices.filter(v => /^en/i.test(v.lang));
+      this._best = en.sort((a, b) => this._rank(a) - this._rank(b))[0] || this.voices[0] || null;
+    }
+    return this._best;
+  }
+
+  /**
+   * The voices worth putting in a picker.
+   *
+   * speech-dispatcher hands a Linux browser every language espeak-ng can
+   * synthesise crossed with every variant — 14,805 of them on a stock Arch box.
+   * One <option> each is a sheet that takes seconds to open and cannot be
+   * scrolled on a phone. English first, because the callouts are English, and
+   * whatever is selected now is always in the list even if it is neither.
+   */
+  pickable(limit = 60) {
     const en = this.voices.filter(v => /^en/i.test(v.lang));
-    const rank = v => (v.localService ? 0 : 2) + (/en[-_]?(GB|AU|US|NZ)/i.test(v.lang) ? 0 : 1);
-    return en.sort((a, b) => rank(a) - rank(b))[0] || this.voices[0] || null;
+    const pool = (en.length ? en : this.voices).slice()
+      .sort((a, b) => this._rank(a) - this._rank(b) || a.name.localeCompare(b.name));
+    const out = pool.slice(0, limit);
+    const cur = this.voice;
+    if (cur && !out.includes(cur)) out.unshift(cur);
+    return out;
   }
 
   /* Browsers refuse to speak before a gesture, so the first tap primes it.

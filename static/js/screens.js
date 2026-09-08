@@ -1328,8 +1328,9 @@ function voiceSheet(app) {
   sheet('Voice', () => h('div.stack',
     !v.available && h('div.note', { 'data-tone': 'warn' },
       h('strong', 'This browser reports no voices'),
-      'Callouts will be silent. On Linux, install speech-dispatcher and restart the ' +
-      'browser. Lap times still appear on screen.'),
+      'Callouts will be silent. On Linux the browser speaks through speech-dispatcher: ' +
+      'install it and a voice (espeak-ng), and on Chrome or Chromium also launch with ' +
+      '--enable-speech-dispatcher, which is off by default. Lap times still appear on screen.'),
     h('div.field', h('label', 'Read out'),
       h('div.seg', ...[['full', 'Lap and time'], ['time', 'Just the time'], ['off', 'Silent']]
         .map(([k, label]) => h('button', { 'aria-pressed': String(app.prefs.announce === k),
@@ -1338,7 +1339,7 @@ function voiceSheet(app) {
               b.setAttribute('aria-pressed', String(b === e.currentTarget))); } }, label)))),
     h('div.field', h('label', 'Voice'),
       h('select', { onchange: e => app.savePrefs({ voiceName: e.target.value }) },
-        ...v.voices.map(vo => h('option', { value: vo.name, selected: vo.name === v.voice?.name },
+        ...v.pickable().map(vo => h('option', { value: vo.name, selected: vo.name === v.voice?.name },
           `${vo.name} (${vo.lang})`)))),
     h('div.field', h('label', `Speed`),
       h('input', { type: 'range', min: '0.7', max: '1.6', step: '0.05', value: app.prefs.rate,

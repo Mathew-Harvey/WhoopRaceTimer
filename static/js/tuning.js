@@ -479,6 +479,14 @@ export function readiness(passes, threshold, fraction) {
            ready: rep.seen >= need && rep.verdict === 'good' };
 }
 
+/* An analog 5.8 GHz video signal is about this wide, so channels this close
+ * together cannot be told apart by an RSSI sweep. */
+const VIDEO_BW_MHZ = 20;
+/* Within this share of the winner's lift is a tie, not a runner-up. */
+const TIE_MARGIN = 0.25;
+/* Which label to prefer when the radio genuinely cannot tell. */
+const BAND_PREFERENCE = ['R', 'F', 'E', 'A', 'B'];
+
 export const MIN_PASSES = 3, MAX_PASSES = 6;
 /* Peaks varying by more than this share of their own height above quiet is a
  * track that needs more evidence before anyone calls it calibrated. */
@@ -611,6 +619,24 @@ export class ChannelScanner {
    * clear of the *median* channel, not merely be the maximum — otherwise a flat
    * scan with no quad powered on still returns a confident-looking answer.
    */
+  /**
+   * Which channel the quad is on, and which channels are indistinguishable
+   * from it.
+   *
+   * A scan cannot simply take the strongest reading. An analog 5.8 GHz
+   * transmitter is around 20 MHz wide, and the channel tables overlap far more
+   * finely than that: R8 is 5917 and E7 is 5925, eight megahertz apart, so a
+   * quad on R8 lights up both and either can come out on top on the day. The
+   * strongest reading is therefore evidence of roughly where the video is, not
+   * of which label the pilot's goggles show.
+   *
+   * So everything within a video bandwidth of the winner, reading within a
+   * quarter of its lift, is a genuine tie. Ties are broken toward Raceband and
+   * then Fatshark, because that is what whoop and HDZero pilots actually fly
+   * and therefore what their goggles will be displaying — and every tied
+   * channel is handed back so the screen can offer them rather than quietly
+   * deciding on the pilot's behalf.
+   */
   static best(results) {
     const seen = results.filter(r => (r.samples ?? 2) >= 1);
     if (!seen.length) return null;
@@ -619,8 +645,18 @@ export class ChannelScanner {
     const median = peaks[Math.floor(peaks.length / 2)];
     const top = sorted[0];
     const lift = top.peak - median;
-    /* Confidence needs a clear lift AND two readings behind it. */
-    return { ...top, median, lift, confident: lift > 150 && (top.samples ?? 2) >= 2,
-             runnerUp: sorted.find(r => Math.abs(r.freq - top.freq) > 20) || sorted[1] || null };
+
+    const tied = seen.filter(r => Math.abs(r.freq - top.freq) <= VIDEO_BW_MHZ &&
+                                  top.peak - r.peak <= lift * TIE_MARGIN);
+    const rank = r => BAND_PREFERENCE.indexOf(r.band ?? r.name[0]);
+    const pick = [...tied].sort((a, b) => {
+      const d = (rank(a) < 0 ? 99 : rank(a)) - (rank(b) < 0 ? 99 : rank(b));
+      return d || b.peak - a.peak;
+    })[0] || top;
+
+    return { ...pick, median, lift, confident: lift > 150 && (top.samples ?? 2) >= 2,
+             /* Same signal, different label: what the goggles might call it. */
+             alsoCalled: tied.filter(r => r.name !== pick.name),
+             runnerUp: sorted.find(r => Math.abs(r.freq - top.freq) > VIDEO_BW_MHZ) || null };
   }
 }

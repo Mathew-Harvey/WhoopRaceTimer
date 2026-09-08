@@ -205,6 +205,23 @@ receiver in the room, so one quad crossing lifts all four channels and the gate
 can no longer tell whose quad went through. Low power keeps the peak local,
 which is the entire basis of RSSI timing indoors.
 
+### Finding a channel
+
+The sweep reports the channel a pilot's goggles show, which is not always the
+one that read loudest. An analog 5.8 GHz signal is about 20 MHz wide and the
+channel tables overlap far more finely than that — **R8 is 5917 and E7 is
+5925** — so a quad on R8 lights up both, and either can come out on top on the
+day. The strongest reading says roughly where the video is, not what it is
+called.
+
+So everything within a video bandwidth of the winner and close to its strength
+is treated as a tie, broken toward Raceband and then Fatshark because that is
+what whoop and HDZero pilots fly. Every tied name is offered on screen as well:
+the pilot can read the answer off their goggles, which the radio cannot.
+
+The tables themselves are the standard ones — Raceband, Fatshark, and Boscam
+A/B/E — and the band order the LapRF expects is `FREBA`, so Raceband is index 2.
+
 ### Micro tracks
 
 A RaceGOW-sized room is the hard case, and three things are done for it. The

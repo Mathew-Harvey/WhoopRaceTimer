@@ -1371,16 +1371,27 @@ SCREENS.findChannel = (app, slot) => {
         return;
       }
       status.textContent = '';
+      const use = name => () => {
+        app.setPilot(slot, { channel: name });
+        store.save('channelPicked', true);
+        toast(`Slot ${slot} set to ${name}`, 'ok');
+        close();
+      };
+      /* Channels closer together than a video signal is wide cannot be told
+       * apart by a sweep — R8 and E7 are eight megahertz apart and one quad
+       * lights up both. Offering the alternatives is the honest thing: the
+       * pilot can read the answer off their goggles, which this radio cannot. */
+      const alts = best.alsoCalled || [];
       mount(result, h('div.note', { 'data-tone': 'ok' },
         h('strong', `${best.name} — ${best.freq} MHz`),
         `That channel came back ${Math.round(best.lift)} counts above everything else, so ` +
-        'it is almost certainly your video.',
-        h('div.act', h('button.go', { onclick: () => {
-          app.setPilot(slot, { channel: best.name });
-          store.save('channelPicked', true);
-          toast(`Slot ${slot} set to ${best.name}`, 'ok');
-          close();
-        } }, `Use ${best.name}`))));
+        'it is almost certainly your video.' +
+        (alts.length ? ` Your goggles may label it ${alts.map(a => a.name).join(' or ')} — ` +
+                       `${alts.map(a => a.freq).join(' and ')} MHz sit inside the same signal, ` +
+                       'and any of them will time it.' : ''),
+        h('div.act',
+          h('button.go', { onclick: use(best.name) }, `Use ${best.name}`),
+          ...alts.map(a => h('button.ghost', { onclick: use(a.name) }, `Use ${a.name}`)))));
     } }, 'Start the scan');
 
     return h('div.stack', status, start, result, bars);

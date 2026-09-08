@@ -10,6 +10,8 @@
  */
 import { Calibration, SlotSignal, passReport, derive } from '../static/js/tuning.js';
 import { viewBytes } from '../static/js/link.js';
+import { ChannelScanner } from '../static/js/tuning.js';
+import { ALL_CHANNELS } from '../static/js/laprf.js';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -37,6 +39,50 @@ const near = (name, got, want, tol = 0.51) =>
   check('the buffer really did hold the previous packet too',
         new Uint8Array(second.buffer).length === 28,
         'the trap this guards against no longer exists in the fixture');
+}
+
+/* ------------------------------------------------------ finding a channel --- */
+/* A sweep cannot resolve channels closer together than a video signal is wide.
+ * R8 is 5917 and E7 is 5925: one quad on R8 lights up both, and either can read
+ * higher on the day. Taking the strongest reading therefore reports a label the
+ * pilot's goggles do not show. */
+function sweep(overrides) {
+  const rows = ALL_CHANNELS.map(c => ({ ...c, peak: 960, samples: 2 }));
+  for (const [name, peak] of Object.entries(overrides)) {
+    rows.find(r => r.name === name).peak = peak;
+  }
+  return rows;
+}
+
+{
+  /* The observed case: the quad is on R8 and E7 came back marginally stronger. */
+  const b = ChannelScanner.best(sweep({ R8: 2000, E7: 2050, E6: 1400, E8: 1300 }));
+  eq('the label a pilot recognises wins a tie', b.name, 'R8');
+  eq('at the right frequency', b.freq, 5917);
+  eq('and the other name is offered too', b.alsoCalled.map(r => r.name).join(), 'E7');
+  eq('still confident', b.confident, true);
+}
+
+{
+  /* A genuine E-band signal, nothing near it, is not dragged to Raceband. */
+  const b = ChannelScanner.best(sweep({ E4: 2400 }));
+  eq('an unambiguous channel is reported as itself', b.name, 'E4');
+  eq('with nothing to confuse it with', b.alsoCalled.length, 0);
+}
+
+{
+  /* F8 and R7 are both 5880 — the same frequency under two names. */
+  const b = ChannelScanner.best(sweep({ R7: 2300, F8: 2300 }));
+  check('an exact duplicate frequency resolves to one of its names',
+        ['R7', 'F8'].includes(b.name), `picked ${b.name}`);
+  check('and names the other', b.alsoCalled.some(r => ['R7', 'F8'].includes(r.name)),
+        'the duplicate label was not offered');
+}
+
+{
+  /* Noise alone is not a channel. */
+  const b = ChannelScanner.best(sweep({}));
+  eq('a flat sweep is not confident', b.confident, false);
 }
 
 /* ------------------------------------------------------------- ceiling --- */

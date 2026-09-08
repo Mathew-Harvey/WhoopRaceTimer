@@ -1,0 +1,2894 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WhoopTimer</title>
+<style>
+/* ============================================================
+   WhoopTimer — F1 broadcast timing tower.
+   Self-contained: no CDN, no external fonts, no external JS/CSS.
+   RULES ENFORCED IN THIS FILE:
+     · identity colour is ALWAYS a fill (bar, chip, dot, wash) — never a numeral
+     · timing colour is ALWAYS a numeral — never a fill
+     · purple appears in exactly two places: session-fastest lap, peak-hold caret
+     · pure white (#fff) is the gate threshold line and nothing else
+     · no per-pilot numeral may exceed --t-24 (the tier below the clock)
+   ============================================================ */
+:root{
+  color-scheme:dark;
+  accent-color:#00d67a;
+  scrollbar-width:thin;
+  scrollbar-color:#2e3846 transparent;
+
+  /* surface ramp — each step >=1.3:1 on the one below */
+  --bg:#07090c;
+  --surface-1:#10141a;
+  --surface-2:#1a2029;
+  --surface-3:#242c38;
+  --recess:#05070a;
+  --line:#2e3846;
+  --line-subtle:#1e242e;
+  --edge:#4a5666;
+  --hi:inset 0 1px 0 rgb(255 255 255 / .05);
+
+  /* text */
+  --fg:#f2f5f9;
+  --fg-2:#b9c4d2;
+  --fg-3:#8794a5;
+  --on-id:#07090c;
+  --on-go:#05210d;
+
+  /* race status / flag — reserved for state, never for a pilot */
+  --state-green:#00d67a;
+  --state-amber:#ffb020;
+  --state-red:#ff2d46;
+  --state-cheq:#f2f5f9;
+  --info:#3d8bff;
+
+  /* timing semantics — numerals only */
+  --t-purple:#a970ff;
+  --t-green:#00e07a;
+  --t-plain:#b8c2ce;
+  --t-yellow:#ffd24a;
+  --t-none:#7d8a9b;
+
+  /* pilot identity — fills only */
+  --id-1:#00d1e0;
+  --id-2:#4d7cff;
+  --id-3:#ff4fb8;
+  --id-4:#c9f036;
+
+  /* measurement palette — deliberately neutral */
+  --m-trace:#f2f5f9;
+  --thr-line:#ffffff;
+  --m-pass:rgb(0 224 122 / .16);
+  --m-passline:#00e07a;
+  --m-nolap:#05070a;
+  --m-bound:#8794a5;
+  --m-peak:#a970ff;
+  --m-fatal:#ff2d46;
+
+  /* chrome */
+  --focus:#7cc4ff;
+  --hover-edge:#5b6a7d;
+  --banner-bg:#2a1e06;
+  --banner-fg:#ffdf9e;
+  --step-on-bg:#06241a;
+  --disabled-bg:#171d25;
+  --disabled-fg:#6b7787;
+
+  /* spacing — 4px scale */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r1:6px; --r2:10px; --r3:14px;
+  --shadow-1:0 1px 2px rgb(0 0 0 / .5), 0 4px 14px rgb(0 0 0 / .34);
+  --shadow-2:0 2px 6px rgb(0 0 0 / .55), 0 14px 40px rgb(0 0 0 / .48);
+  --dur-fast:120ms; --dur:220ms; --dur-slow:320ms;
+  --ease:cubic-bezier(.2,.8,.2,1);
+
+  /* type — two system stacks, nothing loaded */
+  --font-ui:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-num:ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --font-cond:"Roboto Condensed","Arial Narrow",ui-sans-serif,system-ui,sans-serif;
+
+  /* scale: six steps + three display sizes. 13px is the floor — nothing smaller
+     exists in this app. --t-24 is the hard cap for any per-pilot numeral. */
+  --t-13:13px; --t-15:15px; --t-18:18px; --t-24:24px; --t-32:32px; --t-44:44px;
+  --t-clock:clamp(64px,9vw,148px);
+  --t-countdown:clamp(180px,34vh,420px);
+  --t-go:clamp(120px,22vh,280px);
+}
+/* DAYLIGHT — indoor tracks near windows blow out a dark UI. Same token names. */
+:root[data-theme="day"]{
+  color-scheme:light;
+  --bg:#f2f4f7; --surface-1:#ffffff; --surface-2:#e7ebf1; --surface-3:#d8dee7;
+  --recess:#eef1f5; --line:#b9c2ce; --line-subtle:#dde2e9; --edge:#7d8a9b;
+  --hi:inset 0 1px 0 rgb(255 255 255 / .8);
+  --fg:#0b0f14; --fg-2:#39434f; --fg-3:#5b6672; --on-id:#07090c; --on-go:#05210d;
+  --state-green:#00844c; --state-amber:#a76500; --state-red:#c40f24;
+  --t-purple:#7c3aed; --t-green:#00844c; --t-plain:#333c47; --t-yellow:#8a6200; --t-none:#7d8a9b;
+  --id-1:#00a1ad; --id-2:#3a5fd0; --id-3:#d3208f; --id-4:#8fae1c;
+  --m-trace:#0b0f14; --thr-line:#000000; --m-nolap:#eef1f5; --m-bound:#5b6672;
+  --disabled-bg:#e3e7ed; --disabled-fg:#6b7787;
+  --banner-bg:#fff3d6; --banner-fg:#5a4200;
+  --focus:#0b57d0;
+  --shadow-1:0 1px 2px rgb(9 18 33 / .12), 0 4px 14px rgb(9 18 33 / .10);
+  --shadow-2:0 2px 6px rgb(9 18 33 / .16), 0 14px 40px rgb(9 18 33 / .14);
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font:var(--t-15)/1.45 var(--font-ui);
+  -webkit-font-smoothing:antialiased;overflow:hidden;
+}
+.num,.n{font-family:var(--font-num);font-variant-numeric:tabular-nums lining;letter-spacing:0}
+.cap{font-family:var(--font-cond);font-size:var(--t-13);font-weight:600;
+     letter-spacing:.10em;text-transform:uppercase;color:var(--fg-3);font-stretch:87.5%}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:99px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--edge);background-clip:content-box}
+
+:where(button,input,select,a,summary,[tabindex]):focus-visible{
+  outline:2px solid var(--focus);outline-offset:2px;border-radius:inherit}
+
+button{
+  background:var(--surface-3);color:var(--fg);border:1px solid var(--edge);
+  border-radius:var(--r2);padding:10px 14px;font:inherit;font-weight:600;
+  min-height:36px;cursor:pointer;
+  transition:background var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease)}
+button:hover:not(:disabled){border-color:var(--hover-edge)}
+button:disabled{background:var(--disabled-bg);color:var(--disabled-fg);
+  border-color:var(--line);cursor:not-allowed}
+button.go{background:var(--state-green);border-color:var(--state-green);color:var(--on-go)}
+button.warn{background:var(--state-amber);border-color:var(--state-amber);color:var(--on-id)}
+button.danger{background:var(--state-red);border-color:var(--state-red);color:#2a0508}
+button.ghost{background:transparent;border-color:var(--line);color:var(--fg-2)}
+button.wide{width:100%}
+input,select,textarea{
+  background:var(--recess);color:var(--fg);border:1px solid var(--edge);
+  border-radius:var(--r1);padding:8px 10px;font:inherit;min-height:36px;
+  font-family:var(--font-num);font-variant-numeric:tabular-nums}
+input[type=text]{font-family:var(--font-ui)}
+select{font-family:var(--font-ui)}
+input:hover,select:hover{border-color:var(--hover-edge)}
+input[aria-invalid="true"]{border-color:var(--state-red);box-shadow:0 0 0 1px var(--state-red)}
+input[type=range]{padding:0;border:none;background:transparent;min-height:28px;accent-color:var(--state-green)}
+label{color:var(--fg-2)}
+kbd{display:inline-block;background:var(--surface-3);border:1px solid var(--edge);
+    border-bottom-width:2px;border-radius:var(--r1);padding:1px 6px;
+    font:600 var(--t-13)/1.4 var(--font-num);color:var(--fg-2);min-width:20px;text-align:center}
+h2{margin:0 0 var(--s3);font:600 var(--t-18)/1.2 var(--font-ui)}
+table{width:100%;border-collapse:collapse;font-size:var(--t-15)}
+th{font:600 var(--t-13)/1.4 var(--font-cond);letter-spacing:.10em;text-transform:uppercase;
+   color:var(--fg-3);text-align:left;padding:var(--s2);border-bottom:1px solid var(--line)}
+td{padding:var(--s2);border-bottom:1px solid var(--line-subtle)}
+tr:last-child td{border-bottom:none}
+th.r,td.r{text-align:right}
+td.n{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+a{color:var(--info)}
+.hide{display:none!important}
+[hidden]{display:none!important}
+
+/* ================= APP SHELL ================= */
+.app{height:100dvh;display:grid;grid-template-rows:56px 1fr}
+body.present .statusbar{display:none}
+body.present .app{grid-template-rows:1fr}
+body.present #ticker{display:none}
+
+.statusbar{
+  display:flex;align-items:center;gap:var(--s4);padding:0 var(--s5);
+  background:var(--surface-2);border-bottom:1px solid var(--line);box-shadow:var(--shadow-1)}
+.brand{display:flex;align-items:center;gap:var(--s2);min-width:0}
+.cheq{width:20px;height:20px;border-radius:3px;flex:none;
+  background:repeating-conic-gradient(var(--state-cheq) 0 25%,var(--bg) 0 50%) 0 0/10px 10px}
+#heatName{background:transparent;border:1px solid transparent;color:var(--fg);
+  font:600 var(--t-15) var(--font-ui);padding:4px 6px;min-height:28px;width:170px;border-radius:var(--r1)}
+#heatName:hover:not(:disabled){background:var(--recess);border-color:var(--line)}
+#heatName:disabled{color:var(--fg-2);opacity:1}
+.tabs{display:flex;gap:var(--s1)}
+.tabs button{background:transparent;border:1px solid transparent;color:var(--fg-3);
+  padding:6px 16px;min-height:36px;font:600 var(--t-13)/1 var(--font-cond);
+  letter-spacing:.10em;text-transform:uppercase;border-radius:var(--r1)}
+.tabs button[aria-selected="true"]{color:var(--fg);background:var(--surface-3);border-color:var(--edge)}
+.tabs button[aria-disabled="true"]{color:var(--disabled-fg);cursor:not-allowed}
+.escHint{font:600 var(--t-13)/1 var(--font-cond);letter-spacing:.10em;
+  text-transform:uppercase;color:var(--fg-3)}
+.health{margin-left:auto;display:flex;align-items:center;gap:var(--s3)}
+.chip{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;
+  border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--fg-2);
+  font:600 var(--t-13)/1 var(--font-cond);letter-spacing:.08em;text-transform:uppercase;
+  white-space:nowrap}
+.chip[data-alarm="red"]{background:var(--state-red);border-color:var(--state-red);color:#2a0508}
+.chip[data-alarm="amber"]{background:var(--state-amber);border-color:var(--state-amber);color:var(--on-id)}
+.chip[data-alarm="green"]{background:transparent;border-color:var(--state-green);color:var(--state-green)}
+button.chip{min-height:26px;padding:0 10px}
+
+main{min-height:0;position:relative}
+.surface{position:absolute;inset:0;opacity:1;transform:none;
+  transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.surface[hidden]{display:none}
+.surface.enter{opacity:0;transform:translateY(2px)}
+.scroll{overflow:auto;height:100%;padding:var(--s5) var(--s4) 96px}
+.wrap{max-width:1280px;margin-inline:auto;display:grid;gap:var(--s5)}
+.card{background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r3);
+  padding:var(--s5);box-shadow:var(--shadow-1),var(--hi)}
+
+/* ================= RACE SURFACE ================= */
+#surface-race{display:grid;grid-template-rows:auto 1fr auto auto;height:100%;overflow:hidden}
+
+/* [B] timing band */
+.band{position:relative;background:var(--surface-2);box-shadow:var(--shadow-1),var(--hi);
+  border-top:3px solid var(--flag,var(--surface-3));
+  height:clamp(120px,18vh,200px);
+  display:grid;grid-template-columns:auto auto 1fr auto;align-items:center;
+  gap:var(--s6);padding:0 var(--s6)}
+.band .lapc{display:flex;flex-direction:column;gap:2px}
+.lapc .v{font:800 clamp(44px,6vw,84px)/1 var(--font-num);font-variant-numeric:tabular-nums}
+.lapc .v .sl{color:var(--fg-3)}
+.flagchip{display:inline-flex;align-items:center;height:52px;padding:0 var(--s4);
+  border-radius:var(--r2);font:800 var(--t-24)/1 var(--font-cond);letter-spacing:.06em;
+  text-transform:uppercase;background:var(--surface-3);color:var(--fg-2);white-space:nowrap}
+.flagchip[data-state="staging"]{background:var(--state-amber);color:var(--on-id);animation:pulse 1s steps(1,end) infinite}
+.flagchip[data-state="running"]{background:var(--state-green);color:var(--on-go)}
+.flagchip[data-state="finished"]{background:var(--surface-3);color:var(--fg);
+  box-shadow:inset 0 -6px 0 0 transparent;position:relative;overflow:hidden}
+.flagchip[data-state="finished"]::after{content:"";position:absolute;left:0;right:0;bottom:0;height:6px;
+  background:repeating-conic-gradient(var(--state-cheq) 0 25%,var(--on-id) 0 50%) 0 0/6px 6px}
+.flagchip[data-state="red"]{background:var(--state-red);color:#2a0508}
+@keyframes pulse{50%{opacity:.55}}
+.fmtline{font-size:var(--t-15);line-height:1.4;max-width:32ch;color:var(--fg-2);justify-self:start;
+  background:none;border:none;text-align:left;padding:6px 8px;border-radius:var(--r1)}
+button.fmtline:hover:not(:disabled){background:var(--surface-3)}
+.clockwrap{display:flex;align-items:center;gap:var(--s3);justify-self:end}
+#clock{font:800 var(--t-clock)/1 var(--font-num);font-variant-numeric:tabular-nums;
+  letter-spacing:0;color:var(--fg);white-space:nowrap}
+#clock .lead{color:var(--fg-3)}
+#clock[data-state="idle"]{color:var(--fg-3)}
+#clock[data-state="staging"]{color:var(--state-amber)}
+#clock[data-state="warn"]{color:var(--state-amber);animation:pulse 1s steps(1,end) infinite}
+#clock[data-state="crit"]{color:var(--state-red);animation:pulse 1s steps(1,end) infinite}
+#clock[data-state="finished"]{color:var(--fg);box-shadow:inset 0 -6px 0 0 transparent}
+#clock.stale{filter:saturate(.4);border-left:3px solid var(--state-red);padding-left:var(--s2)}
+#clockManual{font:800 var(--t-18)/1 var(--font-cond);letter-spacing:.06em}
+.rail{position:absolute;left:0;right:0;bottom:0;height:4px;background:var(--recess)}
+.rail>i{display:block;height:100%;background:var(--id,var(--state-green));
+  transition:width var(--dur) var(--ease)}
+.cheqwipe{position:absolute;left:0;top:-3px;height:6px;width:0;
+  background:repeating-conic-gradient(var(--state-cheq) 0 25%,var(--bg) 0 50%) 0 0/6px 6px}
+.cheqwipe.run{width:100%;transition:width 700ms linear}
+
+/* [C] the tower */
+.towerwrap{min-height:0;background:var(--surface-1);display:flex;flex-direction:column;position:relative}
+#tower{flex:1;min-height:0;display:flex;flex-direction:column}
+.trow{
+  --id:var(--fg-3);
+  position:relative;display:grid;
+  grid-template-columns:96px 8px 104px minmax(220px,1.05fr) minmax(150px,.7fr) minmax(190px,.85fr) minmax(200px,.95fr);
+  align-items:center;gap:0 var(--s6);
+  flex:1 1 0;min-height:84px;
+  border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--id) 6%,var(--surface-1));
+  padding-right:var(--s5);
+  transition:transform var(--dur-slow) var(--ease)}
+.trow:last-child{border-bottom:none}
+.trow.pinned{outline:2px solid var(--id);outline-offset:-2px}
+.trow[data-edge="up"]::before,.trow[data-edge="down"]::before,.trow[data-edge="purple"]::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:3px;z-index:2}
+.trow[data-edge="up"]::before{background:var(--state-green)}
+.trow[data-edge="down"]::before{background:var(--state-red)}
+.trow[data-edge="purple"]::before{background:var(--t-purple)}
+.trow.hit-timer,.trow.hit-manual,.trow.hit-signal{animation:hitflash 450ms var(--ease)}
+@keyframes hitflash{
+  0%{background:color-mix(in srgb,var(--id) 38%,var(--surface-1))}
+  100%{background:color-mix(in srgb,var(--id) 6%,var(--surface-1))}}
+.cell-pos{align-self:stretch;display:flex;align-items:center;justify-content:center;gap:6px;
+  background:var(--surface-2)}
+.pos{font:800 var(--t-44)/1 var(--font-num);font-variant-numeric:tabular-nums}
+.posarrow{font-size:16px;line-height:1}
+.posarrow.up{color:var(--state-green)}.posarrow.down{color:var(--state-red)}
+.idbar{align-self:stretch;background:var(--id)}
+.codechip{position:relative;width:88px;height:52px;border-radius:var(--r1);background:var(--id);
+  color:var(--on-id);display:flex;align-items:center;justify-content:center;
+  font:800 var(--t-32)/1 var(--font-cond);letter-spacing:.02em}
+.codechip .slotn{position:absolute;top:2px;right:5px;font:700 var(--t-13)/1 var(--font-num);opacity:.75}
+.cell-name{min-width:0}
+.pname{font:700 var(--t-32)/1.05 var(--font-ui);text-transform:uppercase;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.psub{font:var(--t-13)/1.4 var(--font-cond);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell-num{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+.cell-num .lab{font:600 var(--t-13)/1 var(--font-cond);letter-spacing:.10em;
+  text-transform:uppercase;color:var(--fg-3)}
+.v24{font:650 var(--t-24)/1.05 var(--font-num);font-variant-numeric:tabular-nums}
+.v18{font:600 var(--t-18)/1.1 var(--font-num);font-variant-numeric:tabular-nums}
+.t-purple{color:var(--t-purple)} .t-green{color:var(--t-green)}
+.t-plain{color:var(--t-plain)} .t-yellow{color:var(--t-yellow)} .t-none{color:var(--t-none)}
+.lastwrap{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+.lastline{display:flex;align-items:baseline;gap:6px}
+.sbtag{font:700 var(--t-13)/1 var(--font-cond);letter-spacing:.06em;padding:1px 4px;
+  border:1px solid currentColor;border-radius:3px}
+.ubar{height:4px;width:78px;border-radius:2px;background:currentColor}
+.prov{font:700 var(--t-13)/1 var(--font-num);color:var(--fg-3);border:1px solid var(--line);
+  border-radius:3px;padding:0 4px}
+.stack2{display:flex;gap:var(--s7);justify-content:flex-end}
+.microstrip{position:absolute;left:0;right:0;bottom:0;height:6px;background:var(--recess);z-index:1}
+.microstrip>i{position:absolute;top:0;bottom:0;left:0;background:var(--m-trace);opacity:.85}
+.microstrip>i.over{background:var(--state-green);opacity:1}
+.microstrip>u{position:absolute;top:0;bottom:0;width:2px;background:var(--thr-line)}
+.microstrip[data-fatal="1"]{background:repeating-linear-gradient(45deg,
+  var(--m-fatal) 0 3px,transparent 3px 8px)}
+.outbadge{font:700 var(--t-13)/1 var(--font-cond);letter-spacing:.08em;color:var(--state-amber);
+  border:1px solid var(--state-amber);border-radius:3px;padding:2px 5px}
+.disrail{height:32px;display:flex;align-items:center;gap:var(--s4);padding:0 var(--s5);
+  background:var(--surface-2);border-top:1px solid var(--line);
+  font:600 var(--t-13)/1 var(--font-cond);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3)}
+.disrail button{background:transparent;border:none;color:var(--fg-3);min-height:28px;padding:2px 6px;
+  font:inherit;display:inline-flex;align-items:center;gap:6px}
+.disrail button:hover:not(:disabled){color:var(--fg);background:var(--surface-3)}
+.disrail .dot{width:10px;height:10px;border-radius:2px;background:var(--id,var(--fg-3))}
+.ladder{position:absolute;right:var(--s5);top:0;bottom:6px;width:190px;overflow:auto;
+  display:flex;flex-direction:column;gap:2px;padding:var(--s2) 0;
+  font:var(--t-13)/1.3 var(--font-num);color:var(--fg-2)}
+
+/* solo */
+.solo{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 260px;
+  gap:var(--s5);padding:var(--s5);background:var(--surface-1)}
+.solo .big{font:800 clamp(96px,14vw,200px)/1 var(--font-num);font-variant-numeric:tabular-nums}
+.solo .v44{font:800 var(--t-44)/1 var(--font-num);font-variant-numeric:tabular-nums}
+.solo .lapcol{overflow:auto;font:var(--t-24)/1.4 var(--font-num);text-align:right}
+
+/* [D] event ticker */
+#ticker{height:48px;background:var(--surface-2);border-top:1px solid var(--line);
+  display:flex;align-items:center;gap:var(--s6);padding:0 var(--s5);overflow:hidden;
+  font-size:var(--t-15);white-space:nowrap}
+#ticker .ev{display:inline-flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis}
+#ticker .st{font-family:var(--font-num);color:var(--fg-3)}
+#ticker .pd{width:10px;height:10px;border-radius:2px;background:var(--id,var(--fg-3));flex:none}
+#ticker .err{color:var(--state-red)} #ticker .rej{color:var(--state-amber)}
+
+/* [E] trigger bar + primary action */
+.trigbar{height:96px;background:var(--surface-2);border-top:1px solid var(--line);
+  display:flex;align-items:center;gap:var(--s3);padding:var(--s3) var(--s5);box-shadow:var(--shadow-2)}
+.trigs{flex:1;display:grid;grid-template-columns:repeat(var(--tc,4),1fr);gap:var(--s3)}
+.trig{position:relative;height:60px;border:none;border-radius:var(--r2);background:var(--id);
+  color:var(--on-id);font:800 var(--t-18)/1 var(--font-cond);letter-spacing:.06em;
+  text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:10px;overflow:hidden}
+.trig .kc{background:rgb(0 0 0 / .22);border-radius:4px;padding:2px 7px;font-family:var(--font-num)}
+.trig.undo{background:var(--surface-3);color:var(--fg);box-shadow:inset 0 0 0 2px var(--state-amber)}
+.trig .drain{position:absolute;left:0;bottom:0;height:3px;background:var(--state-amber);width:100%}
+.trig:disabled{background:var(--disabled-bg);color:var(--disabled-fg)}
+.actions{display:flex;align-items:stretch;gap:var(--s3)}
+.secondary{display:flex;flex-direction:column;gap:var(--s2);justify-content:center}
+.secondary button{min-height:36px;padding:4px 16px;font-size:var(--t-13);
+  font-family:var(--font-cond);letter-spacing:.08em;text-transform:uppercase}
+#primary{position:relative;width:240px;height:60px;font:800 var(--t-24)/1 var(--font-cond);
+  letter-spacing:.06em;text-transform:uppercase;overflow:hidden;box-shadow:var(--shadow-2)}
+.holdfill{position:absolute;left:0;top:0;bottom:0;width:0;background:rgb(255 45 70 / .35)}
+.holding .holdfill{width:100%;transition:width 800ms linear}
+
+/* [F] overlays */
+.ov{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  flex-direction:column;gap:var(--s5);background:var(--bg)}
+#ovStaging .ring{position:relative;width:min(46vh,46vw);height:min(46vh,46vw);
+  display:flex;align-items:center;justify-content:center}
+#ovStaging svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}
+#ovStaging .cd{font:800 var(--t-countdown)/1 var(--font-num);font-variant-numeric:tabular-nums;
+  color:var(--state-amber)}
+#ovStaging.last .cd{color:var(--state-green)}
+.plates{display:flex;gap:var(--s4);flex-wrap:wrap;justify-content:center}
+.plate{width:200px;background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r2);
+  overflow:hidden;box-shadow:var(--shadow-1)}
+.plate .top{height:6px;background:var(--id)}
+.plate .body{padding:var(--s3);display:grid;gap:6px}
+.plate .code{width:88px;height:52px;border-radius:var(--r1);background:var(--id);color:var(--on-id);
+  display:flex;align-items:center;justify-content:center;font:800 var(--t-32)/1 var(--font-cond)}
+#ovGo{background:var(--state-green);color:var(--on-go);
+  font:800 var(--t-go)/1 var(--font-cond);letter-spacing:.06em}
+#fastband{position:absolute;top:0;left:0;right:0;z-index:40;height:72px;background:var(--t-purple);
+  color:var(--on-id);display:flex;align-items:center;padding:0 var(--s5);
+  font:700 var(--t-32)/1 var(--font-cond);letter-spacing:.06em;text-transform:uppercase;
+  transform:translateY(-100%);visibility:hidden;pointer-events:none;
+  transition:transform var(--dur) var(--ease),visibility 0s linear var(--dur);
+  clip-path:polygon(0 0,100% 0,100% 100%,18px 100%,0 calc(100% - 14px))}
+#fastband.show{transform:translateY(0);visibility:visible;
+  transition:transform var(--dur) var(--ease)}
+#callmirror{position:absolute;left:0;right:0;z-index:35;display:flex;justify-content:center;
+  pointer-events:none;opacity:0;transition:opacity var(--dur) var(--ease)}
+#callmirror.show{opacity:1}
+#callmirror span{background:var(--surface-2);border:1px solid var(--line);box-shadow:var(--shadow-2);
+  border-radius:var(--r2);padding:10px var(--s5);font:700 var(--t-32)/1.1 var(--font-ui)}
+#ovResult{position:fixed;left:0;right:0;bottom:0;top:33%;z-index:55;background:var(--surface-1);
+  border-top:6px solid var(--id,var(--state-green));box-shadow:var(--shadow-2);
+  padding:var(--s5);overflow:auto;
+  clip-path:polygon(0 0,calc(100% - 28px) 0,100% 28px,100% 100%,0 100%);
+  animation:slideup var(--dur-slow) var(--ease)}
+@keyframes slideup{from{transform:translateY(30px);opacity:0}to{transform:none;opacity:1}}
+#veil{position:absolute;inset:0;z-index:30;background:rgb(7 9 12 / .72);
+  display:flex;align-items:center;justify-content:center;
+  font:800 var(--t-44)/1 var(--font-cond);letter-spacing:.08em;color:var(--state-red)}
+.dimmed{filter:grayscale(.8) brightness(.5)}
+
+/* toasts */
+#toasts{position:fixed;right:var(--s4);bottom:96px;z-index:70;display:flex;flex-direction:column;
+  gap:var(--s2);max-width:420px}
+.toast{background:var(--surface-2);border:1px solid var(--edge);border-left-width:4px;
+  border-radius:var(--r2);padding:10px var(--s3);box-shadow:var(--shadow-2);font-size:var(--t-15)}
+.toast.ok{border-left-color:var(--state-green)}
+.toast.warn{border-left-color:var(--state-amber)}
+.toast.err{border-left-color:var(--state-red)}
+.toast.info{border-left-color:var(--info)}
+
+/* banner */
+.banner{background:var(--banner-bg);border:1px solid var(--state-amber);color:var(--banner-fg);
+  border-radius:var(--r2);padding:var(--s3) var(--s4);display:flex;gap:var(--s4);
+  align-items:center;justify-content:space-between;flex-wrap:wrap}
+
+/* ================= SETUP ================= */
+.seg{display:inline-flex;border:1px solid var(--edge);border-radius:var(--r2);overflow:hidden}
+.seg button{border:none;border-radius:0;background:var(--surface-2);color:var(--fg-2);
+  border-right:1px solid var(--line);min-height:44px;padding:0 var(--s4);
+  font:600 var(--t-15) var(--font-ui)}
+.seg button:last-child{border-right:none}
+.seg button[aria-pressed="true"]{background:var(--state-green);color:var(--on-go)}
+.field{display:flex;align-items:center;justify-content:space-between;gap:var(--s4);
+  padding:var(--s2) 0;border-bottom:1px solid var(--line-subtle)}
+.field:last-child{border-bottom:none}
+.w-num{width:110px} .w-num-sm{width:88px}
+.toggle{min-height:44px;padding:0 var(--s4);border-radius:var(--r2);border:1px solid var(--edge);
+  background:var(--surface-2);color:var(--fg);font:700 var(--t-15) var(--font-cond);
+  letter-spacing:.08em;text-transform:uppercase;display:inline-flex;align-items:center;gap:10px}
+.toggle[aria-pressed="true"]{background:var(--step-on-bg);border-color:var(--state-green);color:var(--state-green)}
+.toggle .pip{width:14px;height:14px;border-radius:3px;background:var(--disabled-fg)}
+.toggle[aria-pressed="true"] .pip{background:var(--state-green)}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s5)}
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s3)}
+@media (max-width:900px){.grid2,.grid4{grid-template-columns:1fr}}
+.rosteritem{display:flex;align-items:center;justify-content:space-between;gap:var(--s3);
+  min-height:56px;padding:0 var(--s3);border:1px solid var(--line);border-radius:var(--r2);
+  background:var(--surface-2);width:100%;text-align:left;color:var(--fg)}
+.rosteritem[aria-pressed="true"]{border-color:var(--state-green);background:var(--step-on-bg)}
+.slotdrop{border:1px dashed var(--edge);border-radius:var(--r2);padding:var(--s3);
+  background:var(--surface-2);display:grid;gap:var(--s2)}
+.slotdrop.armed{border-style:solid;border-color:var(--state-green)}
+
+/* ================= GATE ================= */
+.wizard{display:flex;align-items:center;gap:var(--s4);min-height:56px;padding:0 var(--s4);
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r2);flex-wrap:wrap}
+.steps{display:flex;gap:var(--s2)}
+.stepc{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;
+  border:1px solid var(--line);color:var(--fg-3);
+  font:600 var(--t-13) var(--font-cond);letter-spacing:.08em;text-transform:uppercase}
+.stepc.on{border-color:var(--state-green);color:var(--state-green);background:var(--step-on-bg)}
+.stepc.done{color:var(--fg)}
+.slotblock{background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r3);
+  padding:var(--s5);box-shadow:var(--shadow-1),var(--hi);
+  display:grid;grid-template-columns:minmax(0,1.55fr) minmax(360px,1fr);gap:var(--s6)}
+@media (max-width:1100px){.slotblock{grid-template-columns:1fr}}
+.slotblock[data-stale="1"]{border-color:var(--state-amber)}
+.slothead{display:flex;align-items:center;gap:var(--s3);grid-column:1/-1}
+.meterc{display:block;width:100%;height:96px}
+.tracec{display:block;width:100%;height:130px;margin-top:var(--s3)}
+@media (max-height:800px){.tracec{display:none}}
+.verdict{display:grid;gap:var(--s3)}
+.vchip{justify-self:start;padding:6px 12px;border-radius:var(--r1);
+  font:800 var(--t-15) var(--font-cond);letter-spacing:.08em;text-transform:uppercase;color:var(--on-id)}
+.vchip[data-v="good"]{background:var(--state-green)}
+.vchip[data-v="marginal"]{background:var(--state-amber)}
+.vchip[data-v="fatal"]{background:var(--state-red);color:#fff}
+.vchip[data-v="weak"]{background:var(--state-red);color:#fff}
+.vchip[data-v="none"]{background:var(--surface-3);color:var(--fg-2)}
+.vsent{font:600 var(--t-18)/1.35 var(--font-ui);color:var(--fg)}
+.defgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s2) var(--s4)}
+.defgrid .k{font:600 var(--t-13) var(--font-cond);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3)}
+.defgrid .v{font:600 var(--t-18) var(--font-num);font-variant-numeric:tabular-nums}
+.ok{color:var(--state-green)} .amber{color:var(--state-amber)} .bad{color:var(--state-red)}
+.dirty{width:8px;height:8px;border-radius:99px;background:var(--state-amber);display:inline-block}
+details{border:1px solid var(--line);border-radius:var(--r2);background:var(--surface-1);padding:var(--s3)}
+summary{cursor:pointer;font:600 var(--t-15) var(--font-cond);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-2)}
+.spec{display:flex;align-items:flex-end;gap:2px;height:120px;margin-top:var(--s2)}
+.spec>div{flex:1;background:var(--surface-3);border-radius:2px 2px 0 0;min-height:2px;position:relative}
+.spec>div.top{background:var(--state-green)}
+.spec>div.cur{box-shadow:inset 0 0 0 2px var(--state-amber)}
+.specax{display:flex;justify-content:space-between;margin-top:4px}
+
+@media (max-height:800px){
+  .band{height:120px}
+  .trow{min-height:72px}
+  .pname{font-size:var(--t-24)}
+  .pos{font-size:var(--t-32)}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+    transition-duration:.001ms!important}
+  .trow.hit-timer,.trow.hit-manual,.trow.hit-signal{animation:none;
+    background:color-mix(in srgb,var(--id) 22%,var(--surface-1))}
+}
+
+/* ================= RESPONSIVE =================
+   The tower is a 7-column desktop grid; below 640px it folds to two rows so
+   every timing number stays on screen instead of being clipped off the right.
+   Touch targets go to >=44px, and the race view is allowed to scroll rather
+   than crushing four rows into a phone viewport. */
+
+/* Grid and flex items default to min-width:auto, so they refuse to shrink below
+   their content and push the whole page wider than the viewport. */
+@media (max-width:900px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  main,.surface,.band,.towerwrap,#tower,.trow,#ticker,.trigbar,.health,.statusbar,
+  .clockwrap,.trigs,.actions,.scroll,.wrap,.card,.grid2,.grid4,.field,
+  #slotBlocks,#slotBlocks>*{min-width:0;max-width:100%}
+  /* wide tables scroll inside their card instead of stretching the page */
+  .scroll table{display:block;overflow-x:auto;white-space:nowrap;max-width:100%}
+  /* tablets are touch devices too */
+  button,select,input[type=number],input[type=text],a.rosteritem{min-height:44px}
+  input[type=range]{height:40px}
+  .statusbar button.chip{min-height:40px;height:auto;padding:0 12px}
+  .statusbar span.chip{min-height:30px;height:auto}
+  #heatName{min-height:40px}
+  .tabs button{min-height:40px}
+  .actions .secondary button{min-height:44px}
+}
+
+/* The desktop tower needs ~1500px at full spacing; below that the right-hand
+   timing column would be clipped by the surface's overflow:hidden. */
+@media (max-width:1500px){
+  .trow{grid-template-columns:80px 8px 92px minmax(170px,1fr) minmax(120px,.65fr)
+        minmax(150px,.8fr) minmax(160px,.9fr);gap:0 var(--s5)}
+  .stack2{gap:var(--s5)}
+  .band,.towerwrap,#ticker,.trigbar,#tower,.trow{min-width:0}
+  /* --t-clock is 9vw; below ~1400px that pushes the clock past the band's edge */
+  .band{overflow:hidden}
+  .clockwrap{min-width:0;overflow:hidden}
+  #clock{font-size:clamp(40px,5.4vw,104px)}
+}
+
+/* The roomier chips and tabs overflow a narrow laptop header; let it wrap. */
+@media (max-width:1100px){
+  .app{grid-template-rows:auto 1fr}
+  .statusbar{flex-wrap:wrap;height:auto;padding-top:8px;padding-bottom:8px;row-gap:8px}
+  .health{flex-wrap:wrap;row-gap:8px;min-width:0}
+  .tabs{flex-wrap:wrap;row-gap:4px}
+}
+
+/* ---- tablet / small laptop ---- */
+@media (max-width:900px){
+  .trow{grid-template-columns:64px 6px 76px minmax(0,1fr) 120px 132px 108px;gap:0 var(--s3)}
+  /* status chips wrap onto a second line rather than scrolling out of reach */
+  .statusbar{flex-wrap:wrap;height:auto;padding-top:6px;padding-bottom:6px}
+  .app{grid-template-rows:auto 1fr}
+  .health{flex-wrap:wrap;margin-left:auto;row-gap:6px}
+  .health .chip{flex:0 0 auto}
+  .band{height:auto;overflow:hidden;grid-template-columns:auto minmax(0,1fr);
+        grid-template-rows:auto auto auto auto;gap:2px var(--s3);
+        padding:var(--s2) var(--s4) 8px}
+  .band>*{min-width:0}
+  .band>.lapc{grid-column:1;grid-row:1;align-self:center}
+  .clockwrap{display:contents}
+  #clock{grid-column:2;grid-row:1;justify-self:end;align-self:center;min-width:0;
+         overflow:hidden;text-overflow:clip}
+  #clockManual{grid-column:1/3;grid-row:4;justify-self:start;align-self:center;margin:2px 0 0}
+  #flag{grid-column:1/3;grid-row:2;justify-self:start;max-width:100%}
+  #fmtLine{grid-column:1/3;grid-row:3;justify-self:start;text-align:left}
+  #clock{font-size:clamp(34px,6.2vw,84px)}
+  /* the ticker clips its own overflow; let it be swiped on touch */
+  #ticker{overflow-x:auto;scrollbar-width:none}
+  #ticker::-webkit-scrollbar{display:none}
+  .solo{grid-template-columns:minmax(0,1fr);gap:var(--s3)}
+  .band{height:clamp(104px,15vh,150px);gap:var(--s3);padding:0 var(--s3)}
+  .scroll{padding:var(--s4) var(--s3) 96px}
+  .plate{width:170px}
+}
+
+/* ---- phone ---- */
+@media (max-width:640px){
+  /* header: let the tabs and health chips scroll rather than overflow */
+  .app{grid-template-rows:auto 1fr}          /* header row was pinned to 44px */
+  .statusbar{flex-wrap:wrap;gap:var(--s3);padding:10px var(--s3);height:auto;
+             padding-top:max(10px,env(safe-area-inset-top))}
+  .brand{order:1;flex:1 1 auto}
+  .brand input#heatName{max-width:44vw}
+  .health{order:2;margin-left:0;flex-wrap:wrap;max-width:100%;row-gap:6px}
+  .health .chip{flex:0 0 auto}
+  #tabs{order:3;width:100%;overflow-x:auto;scrollbar-width:none;gap:4px;padding-bottom:2px}
+  #tabs::-webkit-scrollbar{display:none}
+  #tabs button{flex:0 0 auto;min-height:44px;padding:0 14px}
+  .escHint{order:2;font-size:11px;letter-spacing:.06em}
+
+  /* timing band: lap + clock on one line, flag + format beneath */
+  .band{height:auto;grid-template-columns:auto minmax(0,1fr);
+        grid-auto-rows:auto;gap:2px var(--s3);padding:var(--s2) var(--s3) 8px}
+  .band>.lapc{grid-column:1;grid-row:1;align-self:center}
+  #flag{grid-column:1/3;grid-row:2;justify-self:start;height:40px;font-size:var(--t-15);
+        max-width:100%;white-space:normal;line-height:1.1}
+#fmtLine{display:none}          /* Setup tab covers this; buys a row for the tower */
+  .band{grid-template-rows:auto auto auto}
+  #clockManual{grid-row:3}
+  #clockManual{font-size:var(--t-13);height:22px;min-height:22px}
+  #clock{font-size:clamp(30px,9.5vw,48px);max-width:100%;overflow:hidden}
+  #lapCount{font-size:clamp(28px,9vw,44px)}
+
+  /* tower row -> two rows: identity above, timing numbers below */
+  #tower{overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .trow{flex:0 0 auto}
+  /* identity on the first line, all four timing figures on the second, so four
+     pilots fit a phone screen without scrolling */
+  .trow{grid-template-columns:32px 4px repeat(3,minmax(0,1fr));
+        grid-template-rows:auto auto;min-height:0;
+        padding:14px var(--s3) 16px 0;gap:10px var(--s3);align-items:center}
+  .trow>.cell-pos{grid-column:1;grid-row:1/3;padding:0 2px}
+  .trow .pos{font-size:var(--t-24)}
+  .trow .posarrow{font-size:var(--t-13)}
+  .trow>.ladder{display:none}                 /* absolutely-positioned overlay */
+  .trow>.idbar{grid-column:2;grid-row:1/3}
+  .trow>.codechip{grid-column:3;grid-row:1;justify-self:start}
+  .trow>.cell-name{grid-column:4/6;grid-row:1;text-align:left}
+  .trow>.cell-num{grid-row:2;text-align:left;align-items:flex-start;min-width:0}
+  .trow>.cell-num:nth-child(5){grid-column:3}
+  .trow>.cell-num:nth-child(6){grid-column:4}
+  .trow>.cell-num:nth-child(7){grid-column:5}
+  .trow>.microstrip{grid-column:1/6}
+  .trow .lab{font-size:10px}
+  .trow .v24{font-size:var(--t-18)}
+  #tower{overflow-x:hidden}
+  .trow .stack2{flex-wrap:wrap;justify-content:flex-start;gap:var(--s3);min-width:0}
+  .trow>.codechip{width:64px;height:40px}
+  .trow .pname{font-size:var(--t-24)}
+  .trow .psub{font-size:var(--t-13)}
+
+  /* manual triggers: 2x2 so each stays thumb-sized */
+  .trigbar{height:auto;flex-wrap:wrap;overflow:hidden;max-width:100vw;gap:var(--s3);
+           padding:var(--s3) var(--s3) calc(var(--s3) + env(safe-area-inset-bottom))}
+  .trigs{width:auto;flex:1 1 100%;gap:var(--s3);max-width:100%;
+         grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .trigs{min-width:0}
+  .trigs>button{min-height:52px;min-width:0;padding:0 8px;
+                font-size:var(--t-13);white-space:normal;line-height:1.15}
+  /* one row of actions instead of a stacked column that eats the tower */
+  .actions{width:auto;flex:1 1 100%;max-width:100%;gap:var(--s2);flex-direction:row;
+           align-items:stretch}
+  .actions .secondary{flex-direction:row;flex:1.6;gap:var(--s2);min-width:0}
+  .actions .secondary button{flex:1;min-width:0;min-height:52px;padding:0 6px;
+           font-size:11px;line-height:1.15;white-space:normal}
+  #primary{width:auto;flex:1;height:52px;min-height:52px;font-size:var(--t-18)}
+  #ticker{height:34px;font-size:var(--t-13);padding:0 var(--s3)}
+
+  /* forms and cards */
+  .grid2,.grid4{grid-template-columns:1fr}
+  .wizard{padding:var(--s3);gap:var(--s2)}
+  .wizard>*{min-height:44px}
+  .steps{width:100%;overflow-x:auto;scrollbar-width:none}
+  .plate{width:calc(50% - var(--s4));min-width:140px}
+  .scroll{padding:var(--s3) var(--s3) calc(96px + env(safe-area-inset-bottom))}
+  .disrail{height:auto;flex-wrap:wrap;padding:6px var(--s3)}
+  button,select,input[type=number],input[type=text]{min-height:44px}
+  /* .chip sets an explicit 26px height; interactive chips need a real tap target */
+  .statusbar button.chip{min-height:44px;height:auto;padding:0 12px}
+  .statusbar span.chip{min-height:30px;height:auto}
+  #heatName{min-height:44px;width:auto;flex:1 1 auto;min-width:0}
+  .actions .secondary{display:flex;gap:var(--s2);flex:1;min-width:0}
+  .actions .secondary button{min-height:44px;flex:1;min-width:0}
+  #primary{min-height:56px}
+  table{font-size:var(--t-13)}
+}
+
+/* ---- small phone ---- */
+@media (max-width:400px){
+  .trow{grid-template-columns:28px 4px auto minmax(0,1fr)}
+  #clock{font-size:clamp(34px,12vw,48px)}
+  .plate{width:100%}
+  .brand input#heatName{max-width:38vw}
+}
+
+/* ---- landscape phone: reclaim vertical space ---- */
+@media (max-width:900px) and (max-height:480px){
+  .band{height:auto;padding:4px var(--s3)}
+  #clock{font-size:clamp(28px,7vh,44px)}
+  #ticker{display:none}
+  .trigbar{height:auto}
+}
+
+</style>
+</head>
+<body>
+<div class="app">
+
+<header class="statusbar">
+  <div class="brand">
+    <span class="cheq" aria-hidden="true"></span>
+    <input id="heatName" aria-label="Heat name" maxlength="40" placeholder="Heat 1">
+  </div>
+  <div class="tabs" role="tablist" aria-label="Screens" id="tabs">
+    <button role="tab" id="tab-race" aria-controls="surface-race" aria-selected="true" data-s="race">Race</button>
+    <button role="tab" id="tab-setup" aria-controls="surface-setup" aria-selected="false" data-s="setup">Setup</button>
+    <button role="tab" id="tab-gate" aria-controls="surface-gate" aria-selected="false" data-s="gate">Gate</button>
+    <button role="tab" id="tab-history" aria-controls="surface-history" aria-selected="false" data-s="history">History</button>
+  </div>
+  <div class="escHint" id="escHint" hidden>Esc — setup</div>
+  <div class="health">
+    <span class="chip" id="cLink" role="status">Link</span>
+    <span class="chip" id="cTimer">Timer</span>
+    <button class="chip" id="cVoice" type="button">Voice</button>
+    <span class="chip" id="cBatt">Batt</span>
+    <button class="chip" id="bTheme" type="button" aria-pressed="false" title="Daylight mode">Day</button>
+  </div>
+</header>
+
+<main>
+<!-- ===================== SURFACE 1: RACE ===================== -->
+<section class="surface" id="surface-race" role="tabpanel" aria-labelledby="tab-race">
+  <div class="band" id="band">
+    <div class="cheqwipe" id="cheqwipe"></div>
+    <div class="lapc">
+      <span class="cap" id="lapLab">Lap</span>
+      <span class="v" id="lapCount">—</span>
+    </div>
+    <div class="flagchip" id="flag" data-state="idle" role="status">Idle</div>
+    <button class="fmtline" id="fmtLine" type="button">First to 5 · min lap 3.0 · no holeshot</button>
+    <div class="clockwrap">
+      <span id="clockManual" class="chip" data-alarm="amber" hidden>Manual timing</span>
+      <div id="clock" class="num" data-state="idle" role="timer" aria-live="off">0:00.0</div>
+    </div>
+    <div class="rail"><i id="railFill" style="width:0"></i></div>
+  </div>
+
+  <div class="towerwrap">
+    <div id="fastband" role="status" aria-live="polite"></div>
+    <div id="callmirror" role="status" aria-live="polite"><span></span></div>
+    <div id="tower"></div>
+    <div id="soloView" hidden class="solo"></div>
+    <div class="disrail" id="disRail" hidden></div>
+    <div id="veil" hidden>Data stale</div>
+  </div>
+
+  <div id="ticker" role="status" aria-live="polite" aria-label="Event ticker"></div>
+
+  <div class="trigbar">
+    <div class="trigs" id="trigs"></div>
+    <div class="actions">
+      <div class="secondary">
+        <button id="bStartNow" type="button">Start now</button>
+        <button id="bReset" type="button" title="Press and hold">Hold to reset</button>
+      </div>
+      <button id="primary" class="go" type="button"><span class="holdfill"></span><span id="primaryLab">Arm</span></button>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SURFACE 2: SETUP ===================== -->
+<section class="surface" id="surface-setup" role="tabpanel" aria-labelledby="tab-setup" hidden>
+ <div class="scroll" tabindex="0">
+  <div class="wrap">
+    <div class="banner" id="banner" hidden role="status"></div>
+
+    <div class="card">
+      <h2>Roster and grid</h2>
+      <div class="grid2">
+        <div>
+          <div class="cap" style="margin-bottom:8px">Saved pilots — click one, then a slot</div>
+          <div id="rosterList" style="display:grid;gap:8px"></div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button id="bSaveLineup" type="button">Save this lineup</button>
+            <button id="bClearRoster" type="button" class="ghost">Clear roster</button>
+          </div>
+        </div>
+        <div>
+          <div class="cap" style="margin-bottom:8px">Tonight's grid</div>
+          <div id="slotGrid" style="display:grid;gap:12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Format</h2>
+      <div class="seg" role="group" aria-label="Race format" id="segMode">
+        <button type="button" data-m="laps" aria-pressed="true">Laps</button>
+        <button type="button" data-m="time" aria-pressed="false">Time</button>
+        <button type="button" data-m="consecutive" aria-pressed="false">Best-3</button>
+      </div>
+      <div style="margin-top:16px;max-width:560px">
+        <div class="field" id="fRowLaps"><label for="fLaps">Target laps</label>
+          <input class="w-num" type="number" id="fLaps" min="1" max="60" step="1"></div>
+        <div class="field" id="fRowSecs"><label for="fSecs">Time limit (seconds)</label>
+          <input class="w-num" type="number" id="fSecs" min="10" max="3600" step="10"></div>
+        <div class="field" id="fRowConsec"><label for="fConsec">Consecutive laps</label>
+          <input class="w-num" type="number" id="fConsec" min="2" max="10" step="1"></div>
+        <div class="field"><label for="fMin">Minimum lap time (seconds) — app and timer</label>
+          <input class="w-num" type="number" id="fMin" min="0" max="60" step="0.5"></div>
+        <div class="field"><label for="fCount">Count-in (seconds)</label>
+          <input class="w-num" type="number" id="fCount" min="0" max="30" step="1"></div>
+        <div class="field"><label>Holeshot start (first crossing only starts the clock)</label>
+          <button class="toggle" id="fHole" type="button" aria-pressed="false"><span class="pip"></span><span>Off</span></button></div>
+        <details style="margin-top:12px">
+          <summary>Diverge app and timer minimum lap</summary>
+          <div class="field"><label for="tMinLap">Timer minimum lap (ms)</label>
+            <input class="w-num" type="number" id="tMinLap" min="0" max="60000" step="500"></div>
+          <div id="minLapWarn" class="cap" style="color:var(--state-amber)" hidden></div>
+        </details>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Voice</h2>
+      <div style="max-width:560px">
+        <div class="field"><label>Callouts</label>
+          <button class="toggle" id="vOn" type="button" aria-pressed="true"><span class="pip"></span><span>On</span></button></div>
+        <div class="field"><label for="vSel">Voice</label><select id="vSel" style="max-width:280px"></select></div>
+        <div class="field"><label for="vRate">Rate</label><input type="range" id="vRate" min="0.7" max="1.6" step="0.05" value="1.1" style="width:200px"></div>
+        <div class="field"><span id="vCount" class="cap">Loading voices…</span>
+          <button id="vTest" type="button">Test callout</button></div>
+        <div id="vWarn" class="banner" hidden role="status"></div>
+      </div>
+    </div>
+  </div>
+ </div>
+</section>
+
+<!-- ===================== SURFACE 3: GATE ===================== -->
+<section class="surface" id="surface-gate" role="tabpanel" aria-labelledby="tab-gate" hidden>
+ <div class="scroll" tabindex="0">
+  <div class="wrap">
+    <div class="wizard" id="wizard">
+      <div class="steps">
+        <span class="stepc" id="st1">1 · Noise floor</span>
+        <span class="stepc" id="st2">2 · Fly a pass</span>
+        <span class="stepc" id="st3">3 · Apply</span>
+      </div>
+      <button class="go" id="bWiz" type="button">Start — keep the gate clear</button>
+      <button class="ghost" id="bWizOver" type="button">Start over</button>
+      <span id="wizEvidence" style="font-size:var(--t-15);color:var(--fg-2)"></span>
+      <span id="calPresetWrap" style="margin-left:auto;display:flex;align-items:center;gap:8px">
+        <label class="cap" for="calPreset">Track type</label>
+        <select id="calPreset" style="max-width:300px"></select>
+      </span>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <button class="go" id="bWrite" type="button">Write to timer</button>
+      <span id="writeReason" style="font-size:var(--t-15);color:var(--fg-2)"></span>
+    </div>
+
+    <div id="slotBlocks" style="display:grid;gap:24px"></div>
+
+    <details id="advanced">
+      <summary>Advanced / diagnostics</summary>
+      <div class="grid2" style="margin-top:16px">
+        <div>
+          <h2>Frequency scanner</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label class="cap" for="scSlot">Slot</label>
+            <select id="scSlot" style="width:110px"></select>
+            <button id="bScan" type="button">Scan 40 ch</button>
+            <button id="bScanStop" type="button" class="ghost" disabled>Stop</button>
+          </div>
+          <div id="scOut" style="margin-top:8px;font-size:var(--t-15);color:var(--fg-2)">
+            Sweeps one receiver across every channel. Power one whoop and it tells you the frequency.
+            The slot stops timing while it scans.</div>
+          <div class="spec" id="spec"></div>
+          <div class="specax cap" id="specAx"></div>
+        </div>
+        <div>
+          <h2>Software fallback detector</h2>
+          <div id="fbNote" style="font-size:var(--t-15);color:var(--fg-2);margin-bottom:12px"></div>
+          <button class="wide" id="bCal" type="button">Calibrate quiet baseline</button>
+          <div class="field" style="margin-top:12px">
+            <label for="thSet">Fallback trigger level (counts above quiet)</label>
+            <span class="n" id="thVal">500</span></div>
+          <input type="range" id="thSet" min="10" max="3000" step="10" style="width:100%" aria-label="Fallback trigger level">
+          <div class="field"><label>Count fallback detections as laps</label>
+            <button class="toggle" id="autoDet" type="button" aria-pressed="false"><span class="pip"></span><span>Off</span></button></div>
+          <div id="fbPeaks" class="cap"></div>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <h2>Console</h2>
+        <div id="console" tabindex="0" style="max-height:200px;overflow:auto;background:var(--recess);
+          border:1px solid var(--line);border-radius:var(--r2);padding:8px;
+          font:var(--t-13)/1.6 var(--font-num);color:var(--fg-2)"></div>
+      </div>
+    </details>
+  </div>
+ </div>
+</section>
+
+<!-- ===================== SURFACE 4: HISTORY ===================== -->
+<section class="surface" id="surface-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+ <div class="scroll" tabindex="0">
+  <div class="wrap">
+    <div class="card">
+      <h2>Session bests</h2>
+      <table><thead><tr><th scope="col">Pilot</th><th scope="col" class="r">Best lap</th>
+        <th scope="col" class="r">Best consec</th><th scope="col" class="r">Races</th></tr></thead>
+        <tbody id="sessionRows"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Race history</h2>
+      <div style="display:flex;gap:8px">
+        <a id="bCsv" class="rosteritem" style="width:auto;padding:0 16px;min-height:44px;
+           display:inline-flex;justify-content:center" download="whooptimer.csv" href="/api/history.csv">Download CSV</a>
+        <button id="bClearHist" type="button" class="ghost">Clear history</button>
+      </div>
+      <div id="histOut" style="margin-top:16px;display:grid;gap:16px"></div>
+    </div>
+  </div>
+ </div>
+</section>
+</main>
+</div>
+
+<div class="ov" id="ovStaging" hidden>
+  <div class="ring">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="46" fill="none" stroke="var(--surface-3)" stroke-width="3"></circle>
+      <circle id="cdRing" cx="50" cy="50" r="46" fill="none" stroke="var(--state-amber)"
+              stroke-width="3" stroke-linecap="round" pathLength="1"
+              stroke-dasharray="1" stroke-dashoffset="0"></circle>
+    </svg>
+    <div class="cd num" id="cdNum">5</div>
+  </div>
+  <div class="plates" id="stagePlates"></div>
+</div>
+<div class="ov" id="ovGo" hidden>Go</div>
+<div id="ovResult" hidden role="dialog" aria-label="Race result"></div>
+<div id="toasts" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   1. HELPERS AND STATE
+   ============================================================ */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const byId = id => document.getElementById(id);
+const el = (t, cls, txt) => { const e = document.createElement(t);
+  if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+const esc = s => String(s == null ? '' : s)
+  .replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let S = null;                       // last full state
+let history = [];                   // saved races
+let spoken = new Set(), sayRun = null;
+let voices = [], voiceOk = false, audioArmed = false;
+let lastMessageAt = Date.now();
+let linkState = 'ok';               // ok | stale | down
+let surface = 'race';
+let gapMode = 'gap';                // gap | int   (G)
+let pinSlotOrder = false;           // P
+let pinnedSlot = null;              // click a row
+let heroSlot = null;                // H cycles
+let present = false;                // F
+let sessionFastest = null, sessionFastestSlot = null;
+let prevLapCount = {}, prevPos = {}, posFlash = {};
+let pendingSource = {};             // slot -> 'T' | 'M' | 'S'
+let lapSource = {};                 // slot -> last lap provenance glyph
+let rollup = { T: 0, M: 0, S: 0 };
+let undoState = {};                 // slot -> {time, until}
+let absSeries = {};                 // slot -> [{t,v}]  client-held ABSOLUTE rssi
+let lastSampleAt = {};              // slot -> ms
+let hitMarks = {};                  // slot -> [t]
+let peakHold = {};                  // slot -> value
+let domains = {};                   // slot -> {lo,hi,key}
+let calCounts = {};                 // slot -> samples seen this cal phase
+let calPhaseSeen = 'idle';
+let dirtySlots = new Set(), writing = false;
+let boundsStamp = load('boundsStamp', {});
+let prefs = load('prefs', { voiceOn: true, voiceName: '', rate: 1.1, theme: 'dark' });
+let wakeLock = null;
+let reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function load(k, d) { try { return JSON.parse(localStorage.getItem('wt.' + k)) ?? d; }
+  catch (e) { return d; } }
+function store(k, v) { try { localStorage.setItem('wt.' + k, JSON.stringify(v)); } catch (e) {} }
+
+const DEFAULT_COLORS = ['#e5484d', '#3e9dd8', '#46a758', '#f0a12b'];
+const idVar = slot => 'var(--id-' + (((slot - 1) % 4) + 1) + ')';
+function idColor(p) {           // honour a custom roster colour, else the token
+  if (p && p.color && !DEFAULT_COLORS.includes(String(p.color).toLowerCase())) return p.color;
+  return idVar(p ? p.slot : 1);
+}
+const code3 = n => (String(n || '').trim().slice(0, 3) || '—').toUpperCase();
+const fmt2 = v => v == null ? '—' : Number(v).toFixed(2);
+const fmt3 = v => v == null ? '—' : Number(v).toFixed(3);
+function clockStr(t) {
+  t = Math.max(0, t || 0);
+  const m = Math.floor(t / 60), s = (t % 60).toFixed(1).padStart(4, '0');
+  return { m: String(m), s };
+}
+function numOr(elm, fallback, min, max) {
+  if (elm.value === '' || elm.value == null) { elm.setAttribute('aria-invalid', 'false'); return fallback; }
+  let v = Number(elm.value);
+  if (!isFinite(v)) { elm.setAttribute('aria-invalid', 'true'); return fallback; }
+  const c = Math.min(max, Math.max(min, v));
+  elm.setAttribute('aria-invalid', c !== v ? 'true' : 'false');
+  return c;
+}
+
+/* canvas palette — read once from the tokens, re-read on theme change */
+let PAL = {};
+function readPalette() {
+  const cs = getComputedStyle(document.documentElement);
+  const g = n => cs.getPropertyValue(n).trim();
+  PAL = { trace: g('--m-trace'), thr: g('--thr-line'), pass: g('--m-pass'),
+    passline: g('--m-passline'), nolap: g('--m-nolap'), bound: g('--m-bound'),
+    peak: g('--m-peak'), fatal: g('--m-fatal'), fg: g('--fg'), fg2: g('--fg-2'),
+    fg3: g('--fg-3'), s1: g('--surface-1'), s2: g('--surface-2'), s3: g('--surface-3'),
+    recess: g('--recess'), line: g('--line'), green: g('--state-green'),
+    amber: g('--state-amber'), red: g('--state-red'), onId: g('--on-id'),
+    font: g('--font-num') };
+}
+
+/* ============================================================
+   2. TOAST + POST WRAPPER
+   ============================================================ */
+function toast(msg, kind) {
+  const t = el('div', 'toast ' + (kind || 'info'), msg);
+  $('#toasts').appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 260); }, 4200);
+}
+function post(url, body) {
+  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}) })
+    .then(r => r.json().catch(() => ({ ok: r.ok })))
+    .catch(() => { toast('Server unreachable — ' + url, 'err'); return { ok: false, offline: true }; });
+}
+
+/* ============================================================
+   3. SPEECH — with an explicit gesture primer
+   ============================================================ */
+function loadVoices() {
+  voices = speechSynthesis.getVoices() || [];
+  const sel = $('#vSel');
+  sel.innerHTML = voices.map((v, i) =>
+    '<option value="' + i + '">' + esc(v.name) + ' (' + esc(v.lang) + ')</option>').join('');
+  let idx = voices.findIndex(v => v.name === prefs.voiceName);
+  if (idx < 0) idx = voices.findIndex(v => /en[-_]?(GB|AU|US)/i.test(v.lang));
+  if (idx >= 0) sel.value = String(idx);
+  const v = voices[sel.value];
+  $('#vCount').textContent = voices.length
+    ? voices.length + ' voices · ' + (v ? v.name + ' (' + v.lang + ')' : 'none selected')
+    : 'No voices found — callouts will be silent';
+  const w = $('#vWarn');
+  w.hidden = voices.length > 0;
+  w.textContent = 'This browser reports no speech voices. Callouts cannot be spoken; ' +
+    'every callout still appears on screen under the timing band.';
+  renderHealth();
+}
+speechSynthesis.onvoiceschanged = loadVoices;
+loadVoices();
+
+function say(text, priority) {
+  showCallout(text);
+  if (!prefs.voiceOn) return;
+  try {
+    if (priority) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    const v = voices[$('#vSel').value];
+    if (v) u.voice = v;
+    u.rate = parseFloat($('#vRate').value) || 1.1;
+    u.onstart = () => { if (!voiceOk) { voiceOk = true; renderHealth(); } };
+    u.onerror = () => { voiceOk = false; renderHealth(); };
+    speechSynthesis.speak(u);
+  } catch (e) { voiceOk = false; renderHealth(); }
+}
+function armAudio(explicit) {
+  if (audioArmed && !explicit) return;
+  audioArmed = true;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance('Voice ready');
+    const v = voices[$('#vSel').value]; if (v) u.voice = v;
+    u.rate = parseFloat($('#vRate').value) || 1.1;
+    u.onstart = () => { voiceOk = true; renderHealth(); };
+    speechSynthesis.speak(u);
+  } catch (e) {}
+  renderHealth();
+}
+addEventListener('pointerdown', () => armAudio(false), { once: true });
+addEventListener('keydown', () => armAudio(false), { once: true });
+
+let calloutTimer = null;
+function showCallout(text) {
+  const m = $('#callmirror');
+  m.firstElementChild.textContent = text;
+  m.classList.add('show');
+  clearTimeout(calloutTimer);
+  calloutTimer = setTimeout(() => m.classList.remove('show'), 2000);
+}
+
+/* ============================================================
+   4. SSE — every message type preserved, plus liveness
+   ============================================================ */
+const es = new EventSource('/events');
+es.onopen = () => { linkState = 'ok'; lastMessageAt = Date.now();
+  fetch('/api/state').then(r => r.json()).then(d => { S = d; render(); }).catch(() => {});
+  renderHealth(); };
+es.onerror = () => { linkState = 'down'; renderHealth(); };
+es.onmessage = ev => {
+  lastMessageAt = Date.now();
+  if (linkState !== 'ok') { linkState = 'ok'; renderHealth(); }
+  let m;
+  try { m = JSON.parse(ev.data); } catch (e) { return; }
+  try { handle(m); }
+  catch (err) { toast('UI error: ' + err.message, 'err'); }
+};
+function handle(m) {
+  if (m.type === 'state') { S = m; render(); }
+  else if (m.type === 'tick') {
+    if (!S) return;
+    const was = S.race.state;
+    S.race.elapsed = m.elapsed; S.race.countdown = m.countdown; S.race.state = m.state;
+    applyClock(); renderStaging();
+    if (was !== m.state) render();
+  }
+  else if (m.type === 'say') {
+    if (sayRun == null) sayRun = m.id;
+    if (m.id < sayRun) { spoken.clear(); }      // server restarted: ids went backwards
+    sayRun = m.id;
+    if (!spoken.has(m.id)) { spoken.add(m.id); say(m.text, m.priority); }
+    if (spoken.size > 400) spoken = new Set([...spoken].slice(-100));
+  }
+  else if (m.type === 'hit') {
+    const g = m.source === 'timer' ? 'T' : 'S';
+    if (m.source !== 'signal-only') pendingSource[m.slot] = g;
+    flashRow(m.slot, m.source);
+    hitMarks[m.slot] = (hitMarks[m.slot] || []).filter(t => Date.now() - t < 90000).concat(Date.now());
+    meterFlash[m.slot] = Date.now();
+    if (surface === 'gate') drawAllGate();
+  }
+  else if (m.type === 'scan') { if (S) S.scan = m; renderScan(m); }
+  else if (m.type === 'signal') {
+    if (!S) return;
+    S.signal = m; ingestSignal(m);
+    if (surface === 'race') { renderTowerValues(); }
+    if (surface === 'gate') { patchGate(); drawAllGate(); }
+  }
+  else if (m.type === 'raceFinished') { loadHistory(); showResult(m.results); }
+  else if (m.type === 'console') { pushConsole(m.line); }
+}
+setInterval(() => {
+  const age = (Date.now() - lastMessageAt) / 1000;
+  const was = linkState;
+  if (linkState !== 'down') linkState = age > 3 ? 'stale' : 'ok';
+  $('#veil').hidden = !(age > 20);
+  $('#tower').classList.toggle('dimmed', age > 20);
+  if (was !== linkState) renderHealth();
+  if (age > 3) renderHealth();
+  tickUndo();
+}, 500);
+
+function ingestSignal(m) {
+  const now = Date.now();
+  Object.entries(m.slots || {}).forEach(([k, sg]) => {
+    const s = +k;
+    const v = sg.value;
+    if (v == null) return;
+    const arr = absSeries[s] || (absSeries[s] = []);
+    const last = arr[arr.length - 1];
+    if (!last || last.v !== v || now - last.t > 900) {
+      arr.push({ t: now, v: v });
+      if (v !== (last && last.v)) lastSampleAt[s] = now;
+      if (calPhaseSeen === 'noise' || calPhaseSeen === 'pass')
+        calCounts[s] = (calCounts[s] || 0) + 1;
+    }
+    while (arr.length && now - arr[0].t > 92000) arr.shift();
+    peakHold[s] = Math.max(peakHold[s] || 0, v);
+  });
+  maybeSeedBaseline();
+}
+let seededBaseline = false;
+function maybeSeedBaseline() {
+  if (seededBaseline || !S || !S.signal) return;
+  const slots = Object.values(S.signal.slots || {});
+  if (!slots.length) return;
+  if (slots.some(s => s.baseline != null)) { seededBaseline = true; return; }
+  const enough = (S.fitted || [1,2,3,4]).every(s => (absSeries[s] || []).length >= 20);
+  if (!enough) return;
+  seededBaseline = true;
+  post('/api/signal/calibrate').then(() =>
+    toast('Quiet baseline seeded automatically from the first samples.', 'info'));
+}
+
+/* ============================================================
+   5. SURFACES / TABS
+   ============================================================ */
+function raceLocked() { return S && ['staging', 'running'].includes(S.race.state); }
+function setSurface(name) {
+  if (name !== 'race' && raceLocked() && name !== 'history') {
+    toast('Heat in progress — setup and gate are locked.', 'warn'); return;
+  }
+  surface = name;
+  ['race', 'setup', 'gate', 'history'].forEach(n => {
+    const sec = byId('surface-' + n), tab = byId('tab-' + n);
+    tab.setAttribute('aria-selected', String(n === name));
+    if (n === name) { sec.hidden = false; sec.classList.add('enter');
+      requestAnimationFrame(() => sec.classList.remove('enter')); }
+    else sec.hidden = true;
+  });
+  if (name === 'setup') renderSetup();
+  if (name === 'history') loadHistory();
+  if (name === 'gate') { renderGate(); requestAnimationFrame(drawAllGate); }
+}
+$$('#tabs button').forEach(b => b.onclick = () => setSurface(b.dataset.s));
+
+/* ============================================================
+   6. HEALTH CLUSTER + BANNER
+   ============================================================ */
+function renderHealth() {
+  const d = (S && S.device) || {};
+  const age = (Date.now() - lastMessageAt) / 1000;
+  const link = $('#cLink');
+  if (linkState === 'down') { link.dataset.alarm = 'red'; link.textContent = 'No server · retrying'; }
+  else if (linkState === 'stale') { link.dataset.alarm = 'amber';
+    link.textContent = 'Data ' + age.toFixed(0) + 's old'; }
+  else { link.removeAttribute('data-alarm'); link.textContent = 'Link ok'; }
+  $('#clock').classList.toggle('stale', linkState !== 'ok');
+
+  const t = $('#cTimer');
+  if (!d.connected && !d.ble) { t.dataset.alarm = 'red'; t.textContent = 'Timer offline'; }
+  else if (d.canControl === false) { t.dataset.alarm = 'amber'; t.textContent = 'Manual timing'; }
+  else { t.removeAttribute('data-alarm');
+    t.textContent = (d.ble ? 'BLE' : 'USB') + (d.lastRx ? ' · ' + Math.max(0,
+      (Date.now() / 1000 - d.lastRx)).toFixed(1) + 's' : ''); }
+  $('#clockManual').hidden = !(S && d.canControl === false);
+
+  const v = $('#cVoice');
+  if (!prefs.voiceOn) { v.dataset.alarm = 'amber'; v.textContent = 'Voice off'; }
+  else if (!voices.length) { v.dataset.alarm = 'red'; v.textContent = 'No voices'; }
+  else if (!audioArmed || !voiceOk) { v.dataset.alarm = 'red'; v.textContent = 'Voice silent — click'; }
+  else { v.removeAttribute('data-alarm'); v.textContent = 'Voice ok'; }
+
+  const b = $('#cBatt');
+  const bv = d.battery;
+  if (bv == null) { b.removeAttribute('data-alarm'); b.textContent = '— V'; }
+  else if (bv < 7.0) { b.dataset.alarm = 'red'; b.textContent = bv.toFixed(1) + 'V critical'; }
+  else if (bv < 7.4) { b.dataset.alarm = 'amber'; b.textContent = bv.toFixed(1) + 'V low'; }
+  else { b.removeAttribute('data-alarm'); b.textContent = bv.toFixed(2) + ' V'; }
+
+  const idle = !S || S.race.state === 'idle';
+  $('#tabs').hidden = !idle;
+  $('#escHint').hidden = idle;
+  ['setup', 'gate'].forEach(n => {
+    const tb = byId('tab-' + n);
+    tb.setAttribute('aria-disabled', String(!idle));
+    tb.title = idle ? '' : 'Heat in progress';
+  });
+  $('#heatName').disabled = !idle;
+}
+function renderBanner() {
+  const d = S.device, b = $('#banner');
+  let html = '';
+  if (!d.connected && !d.ble) {
+    html = '<div><b>Timer offline.</b> Power-cycle the LapRF — it only advertises Bluetooth ' +
+      'for a window after power-on, and this reconnects about a second later. ' +
+      'Manual triggers (keys 1–4) still record real lap times in the meantime.</div>';
+  } else if (d.mode === 'ascii' && !d.ble) {
+    html = '<div><b>USB ASCII only — lap detection cannot work in this mode.</b> ' +
+      'The console stream is read-only and updates once every 2.4 s. ' +
+      'Power-cycle the timer for the Bluetooth link, or run the heat on manual triggers ' +
+      '(keys 1–4), which record correct lap times.</div>';
+  } else if (!d.canControl) {
+    html = '<div><b>No control link.</b> Config writes and lap detection are unavailable until ' +
+      'the timer is power-cycled and Bluetooth reconnects.</div>';
+  }
+  b.hidden = !html;
+  if (html) b.innerHTML = html;
+}
+
+/* ============================================================
+   7. SHARED DERIVATIONS
+   ============================================================ */
+function pilots() { return (S && S.race.pilots) || []; }
+function enabledPilots() { return pilots().filter(p => p.enabled); }
+function bySlot(s) { return pilots().find(p => p.slot === s); }
+function orderedSlots() {
+  const en = enabledPilots().map(p => p.slot);
+  if (pinSlotOrder || !S || S.race.state === 'idle') return en.slice().sort((a, b) => a - b);
+  const st = (S.race.standings || []).filter(s => en.includes(s));
+  return st.concat(en.filter(s => !st.includes(s)));
+}
+function computeFastest() {
+  let best = null, slot = null;
+  pilots().forEach(p => p.laps.forEach(l => {
+    if (best == null || l.time_s < best) { best = l.time_s; slot = p.slot; }
+  }));
+  return { best, slot };
+}
+function timeClass(t, p) {
+  if (t == null) return 't-none';
+  if (sessionFastest != null && Math.abs(t - sessionFastest) < 1e-9) return 't-purple';
+  if (p && p.best != null && Math.abs(t - p.best) < 1e-9) return 't-green';
+  return 't-plain';
+}
+function timeTag(t, p) {
+  if (t == null) return '';
+  if (sessionFastest != null && Math.abs(t - sessionFastest) < 1e-9) return 'SB';
+  if (p && p.best != null && Math.abs(t - p.best) < 1e-9) return 'PB';
+  return '';
+}
+function rfOf(slot) { return ((S && S.rfCfg) || {})[String(slot)] || {}; }
+function sigOf(slot) { return ((S && S.signal && S.signal.slots) || {})[String(slot)] || {}; }
+function gateInfo(slot) {
+  const c = rfOf(slot), sg = sigOf(slot);
+  const floor = c.floor == null ? null : Number(c.floor);
+  const ceiling = c.ceiling == null ? null : Number(c.ceiling);
+  const threshold = c.threshold == null ? null : Number(c.threshold);
+  const gain = c.gain == null ? 58 : Number(c.gain);
+  const span = (floor != null && ceiling != null) ? ceiling - floor : null;
+  const seen = lastSampleAt[slot];
+  const ageS = seen ? (Date.now() - seen) / 1000 : null;
+  const value = sg.value == null ? null : Number(sg.value);
+  const hasData = (absSeries[slot] || []).length > 0;
+  let verdict = 'none', word = 'Not measured';
+  if (!hasData) { verdict = 'none'; word = 'No signal'; }
+  if (floor == null || ceiling == null) { verdict = 'none'; word = hasData ? 'Not measured' : 'No signal'; }
+  else if (threshold != null && threshold <= floor) { verdict = 'fatal'; word = 'Will never detect'; }
+  else if (span <= 120) { verdict = 'weak'; word = 'Too weak'; }
+  else if (span < 400) { verdict = 'marginal'; word = 'Marginal'; }
+  else { verdict = 'good'; word = 'Will detect'; }
+  if (verdict !== 'fatal' && hasData && ageS != null && ageS > 12)
+    word = 'Stale ' + Math.round(ageS) + 's';
+  return { floor, ceiling, threshold, gain, span, value, verdict, word, ageS, hasData,
+    headDown: (threshold != null && floor != null) ? threshold - floor : null,
+    headUp: (ceiling != null && threshold != null) ? ceiling - threshold : null };
+}
+function domainFor(slot, g) {
+  const key = g.floor + '|' + g.ceiling + '|' + Math.round(peakHold[slot] || 0);
+  const d = domains[slot];
+  if (d && d.key === key) return d;
+  let lo, hi;
+  if (g.floor != null && g.ceiling != null && g.ceiling > g.floor) {
+    const span = g.ceiling - g.floor;
+    lo = g.floor - span * 0.15;
+    hi = Math.max(g.ceiling, peakHold[slot] || 0) + span * 0.15;
+  } else {
+    const vals = (absSeries[slot] || []).map(p => p.v);
+    lo = vals.length ? Math.min(...vals) * 0.9 : 0;
+    hi = Math.max(vals.length ? Math.max(...vals) * 1.1 : 3000, (g.threshold || 1600) * 1.2, lo + 100);
+  }
+  return (domains[slot] = { lo, hi, key });
+}
+
+/* ============================================================
+   8. TIMING BAND + CLOCK
+   ============================================================ */
+function fmtLineText() {
+  const r = S.race;
+  const bits = [];
+  if (r.mode === 'laps') bits.push('First to ' + r.targetLaps);
+  else if (r.mode === 'time') bits.push(r.targetSeconds + 's heat');
+  else bits.push('Best ' + r.consecN + ' consecutive');
+  bits.push('min lap ' + Number(r.minLap).toFixed(1));
+  bits.push(r.holeshot ? 'holeshot' : 'no holeshot');
+  bits.push('count-in ' + r.countdown_s + 's');
+  if (r.solo) bits.push('SOLO');
+  return bits.join(' · ');
+}
+function applyClock() {
+  if (!S) return;
+  const r = S.race, c = $('#clock');
+  let t, state;
+  if (r.state === 'staging') { t = Math.max(0, r.countdown || 0); state = 'staging'; }
+  else if (r.mode === 'time' && r.state !== 'idle') {
+    t = Math.max(0, r.targetSeconds - (r.elapsed || 0));
+    state = t <= 10 ? 'crit' : t <= 30 ? 'warn' : (r.state === 'idle' ? 'idle' : 'running');
+  } else { t = r.elapsed || 0; state = r.state === 'idle' ? 'idle' :
+    r.state === 'finished' ? 'finished' : 'running'; }
+  const p = clockStr(t);
+  c.innerHTML = '';
+  const lead = el('span', p.m === '0' ? 'lead' : '', p.m);
+  c.appendChild(lead);
+  c.appendChild(document.createTextNode(':' + p.s));
+  c.dataset.state = state;
+  if (r.state === 'finished') c.dataset.state = 'finished';
+  // progress rail
+  let frac = 0;
+  if (r.mode === 'time') frac = r.targetSeconds ? (r.elapsed || 0) / r.targetSeconds : 0;
+  else {
+    const lead2 = orderedSlots().map(s => (bySlot(s) || {}).lapCount || 0);
+    const best = lead2.length ? Math.max(...lead2) : 0;
+    frac = r.targetLaps ? best / r.targetLaps : 0;
+  }
+  $('#railFill').style.width = Math.max(0, Math.min(1, frac)) * 100 + '%';
+}
+function renderBand() {
+  const r = S.race;
+  const lab = $('#lapLab'), val = $('#lapCount');
+  if (r.mode === 'time') { lab.textContent = 'Heat'; val.textContent = r.targetSeconds + 's'; }
+  else if (r.mode === 'consecutive') { lab.textContent = 'Format'; val.textContent = 'Best ' + r.consecN; }
+  else {
+    lab.textContent = 'Lap';
+    const counts = enabledPilots().map(p => p.lapCount);
+    const leadLaps = counts.length ? Math.max(...counts) : 0;
+    val.innerHTML = '';
+    val.appendChild(document.createTextNode(String(Math.min(leadLaps, r.targetLaps) || 0)));
+    val.appendChild(el('span', 'sl', '/'));
+    val.appendChild(document.createTextNode(String(r.targetLaps)));
+  }
+  const f = $('#flag');
+  const down = !S.device.connected && !S.device.ble;
+  let st = r.state, txt = { idle: 'Idle', staging: 'Arming', running: 'Running', finished: 'Finished' }[r.state];
+  if (down && ['staging', 'running'].includes(r.state)) { st = 'red'; txt = 'Red flag — timer offline'; }
+  else if (down && r.state === 'idle') { st = 'red'; txt = 'Timer disconnected'; }
+  f.dataset.state = st; f.textContent = txt;
+  $('#band').style.setProperty('--flag',
+    st === 'running' ? 'var(--state-green)' : st === 'staging' ? 'var(--state-amber)' :
+    st === 'red' ? 'var(--state-red)' : st === 'finished' ? 'var(--state-cheq)' : 'var(--surface-3)');
+  const fl = $('#fmtLine');
+  fl.textContent = fmtLineText();
+  fl.disabled = r.state !== 'idle';
+  const leaderSlot = orderedSlots()[0];
+  $('#band').style.setProperty('--id', idColor(bySlot(leaderSlot)));
+  applyClock();
+}
+let lastState = null;
+function stateTransitions() {
+  const st = S.race.state;
+  if (lastState === st) return;
+  if (st === 'running' && lastState === 'staging') { showGo(); }
+  if (st === 'finished') {
+    const w = $('#cheqwipe'); w.classList.remove('run'); void w.offsetWidth; w.classList.add('run');
+  }
+  if (st === 'idle' || st === 'staging') {
+    sessionFastest = null; sessionFastestSlot = null;
+    rollup = { T: 0, M: 0, S: 0 }; lapSource = {}; prevLapCount = {}; undoState = {};
+    $('#ovResult').hidden = true;
+  }
+  if (['staging', 'running'].includes(st)) requestWake(); else releaseWake();
+  lastState = st;
+}
+function showGo() {
+  const g = $('#ovGo'); g.hidden = false;
+  setTimeout(() => { g.hidden = true; }, 900);
+}
+function renderStaging() {
+  const r = S && S.race;
+  const ov = $('#ovStaging');
+  if (!r || r.state !== 'staging') { ov.hidden = true; return; }
+  ov.hidden = false;
+  const secs = Math.max(0, Math.ceil(r.countdown || 0));
+  $('#cdNum').textContent = String(secs);
+  ov.classList.toggle('last', secs <= 1);
+  const frac = (r.countdown || 0) - Math.floor(r.countdown || 0);
+  const ring = $('#cdRing');
+  ring.setAttribute('stroke-dashoffset', String(1 - frac));
+  ring.setAttribute('stroke', secs <= 1 ? 'var(--state-green)' : 'var(--state-amber)');
+  const host = $('#stagePlates');
+  const want = enabledPilots().map(p => p.slot).join(',');
+  if (host.dataset.k !== want) {
+    host.dataset.k = want; host.innerHTML = '';
+    enabledPilots().forEach(p => {
+      const g = gateInfo(p.slot);
+      const d = el('div', 'plate'); d.style.setProperty('--id', idColor(p));
+      d.appendChild(el('div', 'top'));
+      const b = el('div', 'body');
+      b.appendChild(el('div', 'code', code3(p.name)));
+      b.appendChild(el('div', 'pname', p.name)).style.fontSize = 'var(--t-18)';
+      b.appendChild(el('div', 'psub', 'Slot ' + p.slot + ' · ' + p.channel));
+      const v = el('div', 'vchip', g.word); v.dataset.v = g.verdict;
+      b.appendChild(v);
+      d.appendChild(b); host.appendChild(d);
+    });
+  }
+}
+
+/* ============================================================
+   9. THE TIMING TOWER
+   ============================================================ */
+function buildRow(p) {
+  const row = el('div', 'trow');
+  row.dataset.slot = p.slot;
+  row.tabIndex = 0;
+  row.setAttribute('role', 'group');
+  const cp = el('div', 'cell-pos');
+  cp.appendChild(el('div', 'pos num', '—'));
+  cp.appendChild(el('div', 'posarrow', ''));
+  row.appendChild(cp);
+  row.appendChild(el('div', 'idbar'));
+  const chip = el('div', 'codechip');
+  chip.appendChild(el('span', 'c3', ''));
+  chip.appendChild(el('span', 'slotn num', String(p.slot)));
+  row.appendChild(chip);
+  const nm = el('div', 'cell-name');
+  nm.appendChild(el('div', 'pname', ''));
+  nm.appendChild(el('div', 'psub', ''));
+  row.appendChild(nm);
+  const gp = el('div', 'cell-num');
+  gp.appendChild(el('div', 'lab', 'Gap'));
+  gp.appendChild(el('div', 'v24 gapv', '—'));
+  row.appendChild(gp);
+  const lastc = el('div', 'cell-num');
+  lastc.appendChild(el('div', 'lab', 'Last lap'));
+  const lw = el('div', 'lastwrap');
+  const line = el('div', 'lastline');
+  line.appendChild(el('span', 'prov', 'T'));
+  line.appendChild(el('span', 'sbtag', ''));
+  line.appendChild(el('span', 'v24 lastv', '—'));
+  lw.appendChild(line);
+  lw.appendChild(el('div', 'ubar'));
+  lw.appendChild(el('div', 'psub lapn', ''));
+  lastc.appendChild(lw);
+  row.appendChild(lastc);
+  const st = el('div', 'cell-num');
+  const two = el('div', 'stack2');
+  ['best', 'b3'].forEach(k => {
+    const c = el('div', 'cell-num');
+    c.appendChild(el('div', 'lab', k === 'best' ? 'Best' : 'B3'));
+    c.appendChild(el('div', 'v18 ' + k, '—'));
+    two.appendChild(c);
+  });
+  st.appendChild(two);
+  st.appendChild(el('div', 'psub outslot', ''));
+  row.appendChild(st);
+  const ms = el('div', 'microstrip');
+  ms.appendChild(el('i')); ms.appendChild(el('u'));
+  row.appendChild(ms);
+  row.appendChild(el('div', 'ladder')).hidden = true;
+  row.onclick = ev => { if (ev.target.closest('button')) return;
+    pinnedSlot = pinnedSlot === p.slot ? null : p.slot; renderTower(); };
+  return row;
+}
+function renderTower() {
+  if (!S) return;
+  const host = $('#tower');
+  const solo = S.race.solo && enabledPilots().length === 1;
+  $('#soloView').hidden = !solo;
+  host.hidden = solo;
+  if (solo) { renderSolo(); renderDisRail(); return; }
+
+  const order = orderedSlots();
+  const want = enabledPilots().map(p => p.slot).sort((a, b) => a - b).join(',');
+  if (host.dataset.k !== want) {
+    host.dataset.k = want; host.innerHTML = '';
+    enabledPilots().forEach(p => host.appendChild(buildRow(p)));
+  }
+  // FLIP: measure, reorder, play back
+  const rows = [...host.children];
+  const before = new Map(rows.map(r => [r.dataset.slot, r.getBoundingClientRect().top]));
+  rows.forEach(r => { r.style.order = String(order.indexOf(+r.dataset.slot)); });
+  if (!reduceMotion) {
+    rows.forEach(r => {
+      const now = r.getBoundingClientRect().top;
+      const d = before.get(r.dataset.slot) - now;
+      if (Math.abs(d) > 1) {
+        r.style.transition = 'none';
+        r.style.transform = 'translateY(' + d + 'px)';
+        requestAnimationFrame(() => { r.style.transition = ''; r.style.transform = ''; });
+      }
+    });
+  }
+  renderTowerValues();
+  renderDisRail();
+}
+/* laps, provenance, undo window and the session-fastest lap are tracked for
+   every pilot regardless of which tower layout is on screen (solo included). */
+function trackLaps() {
+  if (!S) return;
+  pilots().forEach(p => {
+    const prev = prevLapCount[p.slot];
+    if (prev != null && p.lapCount > prev) {
+      const src = pendingSource[p.slot] || 'T';
+      lapSource[p.slot] = src; rollup[src] = (rollup[src] || 0) + 1;
+      pendingSource[p.slot] = null;
+      undoState[p.slot] = { until: Date.now() + 8000, time: p.last };
+    }
+    prevLapCount[p.slot] = p.lapCount;
+  });
+  const f = computeFastest();
+  if (f.best != null && (sessionFastest == null || f.best < sessionFastest - 1e-9)) {
+    if (sessionFastest != null) showFastband(bySlot(f.slot), f.best);
+    sessionFastest = f.best; sessionFastestSlot = f.slot;
+  } else if (f.best == null) { sessionFastest = null; sessionFastestSlot = null; }
+}
+
+function renderTowerValues() {
+  if (!S || $('#tower').hidden) { if (S && S.race.solo) renderSolo(); return; }
+  const order = orderedSlots();
+  const leader = bySlot(order[0]);
+  $('#tower').querySelectorAll('.trow').forEach(row => {
+    const slot = +row.dataset.slot, p = bySlot(slot);
+    if (!p) return;
+    const pos = order.indexOf(slot) + 1;
+    row.style.setProperty('--id', idColor(p));
+    row.style.order = String(pos - 1);
+    row.classList.toggle('pinned', pinnedSlot === slot || heroSlot === slot);
+    row.querySelector('.pos').textContent = pos > 0 ? String(pos) : '—';
+    // position change arrows
+    const arrow = row.querySelector('.posarrow');
+    if (prevPos[slot] != null && prevPos[slot] !== pos && S.race.state === 'running') {
+      const up = pos < prevPos[slot];
+      arrow.textContent = up ? '▲' : '▼';
+      arrow.className = 'posarrow ' + (up ? 'up' : 'down');
+      row.dataset.edge = up ? 'up' : 'down';
+      clearTimeout(posFlash[slot]);
+      posFlash[slot] = setTimeout(() => { arrow.textContent = '';
+        if (row.dataset.edge !== 'purple') row.removeAttribute('data-edge'); }, 6000);
+    }
+    prevPos[slot] = pos;
+    row.querySelector('.c3').textContent = code3(p.name);
+    row.querySelector('.pname').textContent = p.name || ('Pilot ' + p.slot);
+    const ch = (S.channels || []).find(c => c[0] === p.channel);
+    row.querySelector('.psub').textContent = p.channel + (ch ? ' · ' + ch[1] + ' MHz' : '');
+
+    // gap / interval
+    const gapCell = row.querySelector('.gapv');
+    row.querySelector('.cell-num .lab').textContent = gapMode === 'gap' ? 'Gap' : 'Int';
+    gapCell.className = 'v24 gapv';
+    if (pos === 1) { gapCell.textContent = 'Leader'; gapCell.classList.add('v18', 't-none'); }
+    else {
+      const refSlot = gapMode === 'gap' ? order[0] : order[pos - 2];
+      const ref = bySlot(refSlot);
+      gapCell.textContent = gapText(p, ref);
+    }
+    // last lap
+    const last = p.last;
+    const lv = row.querySelector('.lastv');
+    const running = S.race.state === 'running' && p.lapCount > 0;
+    lv.className = 'v24 lastv ' + timeClass(last, p);
+    lv.textContent = last == null ? '—' : last.toFixed(3);
+    const tag = timeTag(last, p);
+    const tg = row.querySelector('.sbtag');
+    tg.textContent = tag; tg.hidden = !tag;
+    tg.className = 'sbtag ' + timeClass(last, p);
+    row.querySelector('.ubar').className = 'ubar ' + timeClass(last, p);
+    row.querySelector('.ubar').style.visibility = last == null ? 'hidden' : 'visible';
+    row.querySelector('.lapn').textContent = p.lapCount ? 'L' + p.lapCount : 'no laps yet';
+    const pv = row.querySelector('.prov');
+    pv.textContent = lapSource[slot] || '—';
+    pv.title = { T: 'timer detected', M: 'manual trigger', S: 'software detector' }[lapSource[slot]] || 'no laps yet';
+    // best / b3
+    const consecMode = S.race.mode === 'consecutive';
+    const bEl = row.querySelector('.best'), cEl = row.querySelector('.b3');
+    bEl.textContent = fmt3(p.best); bEl.className = 'best ' + (consecMode ? 'v18 ' : 'v18 ') +
+      (p.best != null && sessionFastest != null && Math.abs(p.best - sessionFastest) < 1e-9 ? 't-purple' : 't-plain');
+    cEl.textContent = fmt3(p.consec);
+    cEl.className = 'b3 ' + (consecMode ? 'v24 ' : 'v18 ') + (p.consec != null ? 't-plain' : 't-none');
+    if (consecMode) lv.classList.replace('v24', 'v18');
+    row.querySelector('.outslot').textContent = '';
+    // micro gate strip
+    paintMicro(row.querySelector('.microstrip'), slot);
+    // ladder for pinned row
+    const lad = row.querySelector('.ladder');
+    if (pinnedSlot === slot || heroSlot === slot) {
+      lad.hidden = false; lad.innerHTML = '';
+      p.laps.slice().reverse().slice(0, 8).forEach(l => {
+        const d = el('div', timeClass(l.time_s, p), 'L' + l.n + '  ' + l.time_s.toFixed(3));
+        lad.appendChild(d);
+      });
+    } else lad.hidden = true;
+  });
+}
+function gapText(p, ref) {
+  if (!ref) return '—';
+  if (S.race.mode === 'consecutive') {
+    if (p.consec == null || ref.consec == null) return '—';
+    const d = p.consec - ref.consec;
+    return (d >= 0 ? '+' : '') + d.toFixed(3);
+  }
+  if (p.lapCount < ref.lapCount) {
+    const n = ref.lapCount - p.lapCount;
+    return '+' + n + ' LAP' + (n > 1 ? 'S' : '');
+  }
+  const d = p.total - ref.total;
+  return (d >= 0 ? '+' : '') + d.toFixed(3);
+}
+function paintMicro(ms, slot) {
+  const g = gateInfo(slot);
+  ms.dataset.fatal = g.verdict === 'fatal' ? '1' : '0';
+  const fill = ms.querySelector('i'), notch = ms.querySelector('u');
+  if (g.floor == null || g.ceiling == null || g.value == null) {
+    fill.style.width = '0'; notch.style.left = '-4px';
+    ms.title = 'Slot ' + slot + ': ' + g.word; return;
+  }
+  const d = domainFor(slot, g);
+  const pct = v => Math.max(0, Math.min(100, ((v - d.lo) / Math.max(1, d.hi - d.lo)) * 100));
+  const tp = pct(g.threshold), vp = pct(g.value);
+  fill.style.width = vp + '%';
+  fill.classList.toggle('over', g.threshold != null && g.value >= g.threshold);
+  notch.style.left = tp + '%';
+  ms.title = 'Slot ' + slot + ': rssi ' + Math.round(g.value) + ' · threshold ' +
+    Math.round(g.threshold) + ' · ' + g.word;
+}
+function flashRow(slot, source) {
+  const row = document.querySelector('.trow[data-slot="' + slot + '"]');
+  if (!row) return;
+  const cls = source === 'timer' ? 'hit-timer' : source === 'signal' ? 'hit-signal' : null;
+  if (source === 'signal-only') {           // detected but NOT counted: strip pulse only
+    const ms = row.querySelector('.microstrip');
+    ms.style.outline = '2px solid var(--fg-3)';
+    setTimeout(() => { ms.style.outline = ''; }, 600);
+    return;
+  }
+  row.classList.remove('hit-timer', 'hit-signal', 'hit-manual');
+  void row.offsetWidth;
+  row.classList.add(cls || 'hit-manual');
+}
+let fastTimer = null;
+function showFastband(p, t) {
+  if (!p) return;
+  const b = $('#fastband');
+  b.textContent = 'Fastest lap · ' + code3(p.name) + ' · ' + t.toFixed(3);
+  b.classList.add('show');
+  const row = document.querySelector('.trow[data-slot="' + p.slot + '"]');
+  if (row) row.dataset.edge = 'purple';
+  clearTimeout(fastTimer);
+  fastTimer = setTimeout(() => b.classList.remove('show'), 2600);
+}
+function renderDisRail() {
+  const off = pilots().filter(p => !p.enabled);
+  const rail = $('#disRail');
+  rail.hidden = off.length === 0;
+  if (!off.length) return;
+  rail.innerHTML = '';
+  off.forEach(p => {
+    const b = el('button', '', '');
+    b.type = 'button';
+    b.style.setProperty('--id', idColor(p));
+    b.appendChild(el('span', 'dot'));
+    b.appendChild(document.createTextNode('Slot ' + p.slot + ' ' + (p.name || '—')));
+    b.disabled = S.race.state !== 'idle';
+    b.title = S.race.state === 'idle' ? 'Click to put back in the heat' : 'Heat in progress';
+    b.onclick = () => post('/api/pilot', { slot: p.slot, enabled: true });
+    rail.appendChild(b);
+  });
+  rail.appendChild(el('span', '', 'not racing'));
+}
+function renderSolo() {
+  const p = enabledPilots()[0];
+  const host = $('#soloView');
+  if (!p) { host.innerHTML = ''; return; }
+  const g = gateInfo(p.slot);
+  host.style.setProperty('--id', idColor(p));
+  host.innerHTML = '';
+  const left = el('div');
+  const head = el('div', 'slothead');
+  const chip = el('div', 'codechip', ''); chip.textContent = code3(p.name);
+  head.appendChild(chip);
+  head.appendChild(el('div', 'pname', p.name));
+  left.appendChild(head);
+  left.appendChild(el('div', 'cap', 'Last lap'));
+  const big = el('div', 'big num ' + timeClass(p.last, p), p.last == null ? '—' : p.last.toFixed(3));
+  left.appendChild(big);
+  const row = el('div', 'stack2'); row.style.justifyContent = 'flex-start'; row.style.gap = '48px';
+  [['Best', fmt3(p.best)], ['Best ' + S.race.consecN, fmt3(p.consec)], ['Laps', String(p.lapCount)]]
+    .forEach(([k, v]) => { const c = el('div');
+      c.appendChild(el('div', 'cap', k));
+      c.appendChild(el('div', 'v44 num', v)); row.appendChild(c); });
+  left.appendChild(row);
+  const cv = el('canvas'); cv.className = 'meterc'; cv.dataset.meter = p.slot;
+  cv.style.height = '96px'; cv.setAttribute('role', 'img');
+  left.appendChild(cv);
+  left.appendChild(el('div', 'cap', g.word + ' · rssi ' +
+    (g.value == null ? '—' : Math.round(g.value)) + ' · threshold ' +
+    (g.threshold == null ? '—' : Math.round(g.threshold))));
+  host.appendChild(left);
+  const lapcol = el('div', 'lapcol');
+  lapcol.appendChild(el('div', 'cap', 'Laps'));
+  p.laps.slice().reverse().forEach(l => {
+    const d = el('div', timeClass(l.time_s, p),
+      'L' + l.n + '  ' + l.time_s.toFixed(3) + '  ' + (timeTag(l.time_s, p) || ''));
+    lapcol.appendChild(d);
+  });
+  host.appendChild(lapcol);
+  requestAnimationFrame(() => drawMeter(cv, p.slot));
+}
+
+/* ============================================================
+   10. TICKER / TRIGGER BAR / PRIMARY ACTION
+   ============================================================ */
+function renderTicker() {
+  const host = $('#ticker');
+  host.innerHTML = '';
+  const lines = (S.race.log || []).slice(-3).reverse();
+  if (!lines.length) {
+    host.appendChild(el('span', 'ev', 'No events yet — press 1–4 for a manual gate pass, or Space to arm.'));
+  }
+  lines.forEach(l => {
+    const ev = el('div', 'ev');
+    const d = new Date((l.t || 0) * 1000);
+    ev.appendChild(el('span', 'st', String(d.getMinutes()).padStart(2, '0') + ':' +
+      String(d.getSeconds()).padStart(2, '0')));
+    const p = pilots().find(x => l.text && l.text.startsWith(x.name));
+    if (p) { const dot = el('span', 'pd'); dot.style.setProperty('--id', idColor(p)); ev.appendChild(dot); }
+    ev.appendChild(el('span', '', l.text));
+    host.appendChild(ev);
+  });
+  const rc = el('div', 'ev');
+  rc.appendChild(el('span', 'st', 'LAPS: TIMER ' + rollup.T + ' · MANUAL ' + rollup.M +
+    ' · SOFT ' + rollup.S));
+  host.appendChild(rc);
+}
+function renderTrigs() {
+  const host = $('#trigs');
+  const en = enabledPilots();
+  host.style.setProperty('--tc', String(Math.max(1, en.length)));
+  const want = en.map(p => p.slot).join(',') + '|' + Object.keys(undoState)
+    .filter(s => undoState[s] && undoState[s].until > Date.now()).join(',');
+  if (host.dataset.k === want) { return; }
+  host.dataset.k = want;
+  host.innerHTML = '';
+  en.forEach(p => {
+    const u = undoState[p.slot];
+    const b = el('button', 'trig');
+    b.type = 'button';
+    b.style.setProperty('--id', idColor(p));
+    if (u && u.until > Date.now()) {
+      b.className = 'trig undo';
+      b.appendChild(document.createTextNode('Undo lap — ' + (u.time == null ? '' : u.time.toFixed(2) + 's')));
+      b.appendChild(el('span', 'drain'));
+      b.onclick = () => undoLap(p.slot);
+    } else {
+      b.appendChild(document.createTextNode('Lap — ' + (p.name || 'P' + p.slot).split(' ')[0]));
+      const kc = el('span', 'kc', String(p.slot)); b.appendChild(kc);
+      b.onclick = () => simPass(p.slot);
+    }
+    host.appendChild(b);
+  });
+}
+function tickUndo() {
+  let changed = false;
+  Object.keys(undoState).forEach(s => {
+    const u = undoState[s];
+    if (u && u.until <= Date.now()) { delete undoState[s]; changed = true; }
+  });
+  if (changed) renderTrigs();
+  document.querySelectorAll('.trig.undo .drain').forEach(d => {
+    const slot = d.closest('.trig');
+    const idx = [...$('#trigs').children].indexOf(slot);
+    const p = enabledPilots()[idx];
+    const u = p && undoState[p.slot];
+    if (u) d.style.width = Math.max(0, (u.until - Date.now()) / 8000 * 100) + '%';
+  });
+}
+function simPass(slot) {
+  pendingSource[slot] = 'M';
+  if (surface === 'gate') {         // test detection only — never a lap
+    meterFlash[slot] = Date.now(); drawAllGate();
+    toast('Test detection on slot ' + slot + ' — no lap recorded (Gate screen).', 'info');
+    return;
+  }
+  post('/api/sim/pass', { slot: slot }).then(x => {
+    if (x.offline) return;
+    if (x.counted) { flashRow(slot, 'manual'); }
+    else {
+      pendingSource[slot] = null;
+      const p = bySlot(slot);
+      let why = 'Race not running';
+      if (!p) why = 'No such slot';
+      else if (!p.enabled) why = (p.name || 'Slot ' + slot) + ' is not racing';
+      else if (S.race.state !== 'running') why = 'Race not running';
+      else why = 'Too soon — minimum lap ' + Number(S.race.minLap).toFixed(1) + 's';
+      toast('Rejected — ' + why, 'warn');
+      const row = document.querySelector('.trow[data-slot="' + slot + '"]');
+      if (row) { row.dataset.edge = 'down'; setTimeout(() => row.removeAttribute('data-edge'), 900); }
+    }
+  });
+}
+function undoLap(slot) {
+  post('/api/race/lap/undo', { slot: slot }).then(x => {
+    if (x && x.ok) { delete undoState[slot]; renderTrigs(); toast('Lap removed.', 'ok'); }
+    else toast('Undo needs the server endpoint POST /api/race/lap/undo, which this ' +
+      'build of the server does not have yet. The lap stands.', 'warn');
+  });
+}
+function renderPrimary() {
+  const st = S.race.state, b = $('#primary'), lab = $('#primaryLab');
+  b.className = 'go'; b.disabled = false; b.title = '';
+  const none = enabledPilots().length === 0;
+  if (st === 'idle') {
+    lab.textContent = 'Arm';
+    if (none) { b.disabled = true; b.title = 'No pilots are racing — enable one in Setup'; }
+    b.onclick = () => post('/api/race/arm');
+  } else if (st === 'staging') {
+    b.className = ''; lab.textContent = 'Cancel count-in';
+    b.onclick = () => post('/api/race/reset').then(() => toast('Count-in cancelled.', 'ok'));
+  } else if (st === 'running') {
+    b.className = ''; lab.textContent = 'Stop';
+    b.onclick = () => post('/api/race/stop');
+  } else {
+    lab.textContent = 'Save & next heat';
+    b.onclick = nextHeat;
+  }
+  $('#bStartNow').disabled = st !== 'idle';
+  $('#bStartNow').title = st === 'idle' ? '' : 'Heat in progress';
+  const laps = pilots().reduce((a, p) => a + p.lapCount, 0);
+  $('#bReset').textContent = laps ? 'Hold to discard ' + laps + ' laps' : 'Hold to reset';
+  $('#bReset').disabled = st === 'staging';
+}
+function nextHeat() {
+  const cur = $('#heatName').value || 'Heat 1';
+  const m = cur.match(/^(.*?)(\d+)\s*$/);
+  const next = m ? m[1] + (parseInt(m[2], 10) + 1) : cur + ' 2';
+  $('#heatName').value = next;
+  post('/api/config', { name: next }).then(() => post('/api/race/arm'));
+  $('#ovResult').hidden = true;
+  loadHistory();
+}
+function showResult(res) {
+  const host = $('#ovResult');
+  if (!res || !res.results) return;
+  host.hidden = false;
+  const win = res.results[0];
+  const winP = win ? bySlot(win.slot) : null;
+  host.style.setProperty('--id', winP ? idColor(winP) : 'var(--state-green)');
+  host.innerHTML = '';
+  const h = el('div', 'slothead');
+  const chip = el('div', 'codechip'); chip.style.width = '120px'; chip.style.height = '72px';
+  chip.style.setProperty('--id', winP ? idColor(winP) : 'var(--state-green)');
+  chip.textContent = code3(win ? win.name : '');
+  h.appendChild(chip);
+  const t = el('div');
+  t.appendChild(el('div', 'cap', esc(res.name) + ' · ' + res.mode + ' · ' +
+    Number(res.duration).toFixed(1) + 's'));
+  t.appendChild(el('div', 'pname', (win ? win.name : '—') + ' wins'));
+  h.appendChild(t);
+  host.appendChild(h);
+  let fastest = null, fastName = '';
+  res.results.forEach(r => { if (r.best != null && (fastest == null || r.best < fastest))
+    { fastest = r.best; fastName = r.name; } });
+  const fl = el('div', 'vsent');
+  fl.innerHTML = 'Fastest lap <span class="v24 num t-purple">' +
+    (fastest == null ? '—' : fastest.toFixed(3)) + '</span> · ' + esc(fastName);
+  host.appendChild(fl);
+  const tb = el('table');
+  tb.innerHTML = '<thead><tr><th scope="col">Pos</th><th scope="col">Pilot</th>' +
+    '<th scope="col" class="r">Laps</th><th scope="col" class="r">Best</th>' +
+    '<th scope="col" class="r">Best consec</th><th scope="col" class="r">Total</th></tr></thead>';
+  const tbody = el('tbody');
+  res.results.forEach(r => {
+    const tr = el('tr');
+    [String(r.pos), r.name].forEach(v => tr.appendChild(el('td', '', v)));
+    [String(r.laps), fmt3(r.best), fmt3(r.consec), fmt3(r.total)]
+      .forEach(v => tr.appendChild(el('td', 'n r', v)));
+    tbody.appendChild(tr);
+  });
+  tb.appendChild(tbody); host.appendChild(tb);
+  const acts = el('div'); acts.style.cssText = 'display:flex;gap:12px;margin-top:24px';
+  const again = el('button', 'go', 'Race again'); again.type = 'button';
+  again.onclick = () => { host.hidden = true; post('/api/race/arm'); };
+  const back = el('button', 'ghost', 'Back to setup'); back.type = 'button';
+  back.onclick = () => { host.hidden = true; setSurface('setup'); };
+  acts.appendChild(again); acts.appendChild(back);
+  host.appendChild(acts);
+}
+
+/* wake lock */
+async function requestWake() {
+  try { if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); }
+  catch (e) {}
+}
+function releaseWake() { try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && S && ['staging', 'running'].includes(S.race.state))
+    requestWake();
+});
+
+/* ============================================================
+   11. GATE SURFACE — one full-width block per slot
+   ============================================================ */
+let meterFlash = {};
+let gateBuilt = false;
+function fitted() { return (S && S.fitted) || [1, 2, 3, 4]; }
+function isDirtyEl(e) { return e && (e === document.activeElement || e.dataset.dirty === '1'); }
+
+function buildGate() {
+  const host = $('#slotBlocks');
+  host.innerHTML = '';
+  fitted().forEach(s => {
+    const b = el('div', 'slotblock');
+    b.dataset.slot = s;
+    b.innerHTML =
+      '<div class="slothead">' +
+        '<div class="codechip"><span class="c3"></span><span class="slotn num">' + s + '</span></div>' +
+        '<div><div class="pname" style="font-size:var(--t-24)"></div>' +
+        '<div class="psub"></div></div>' +
+        '<span class="dirty" hidden title="unsaved"></span>' +
+        '<span class="cap wrres" style="margin-left:auto"></span>' +
+      '</div>' +
+      '<div>' +
+        '<canvas class="meterc" role="img" aria-label=""></canvas>' +
+        '<div class="cap scalestamp" style="margin-top:6px"></div>' +
+        '<canvas class="tracec" role="img" aria-label=""></canvas>' +
+        '<div class="cap tracemeta"></div>' +
+      '</div>' +
+      '<div class="verdict">' +
+        '<span class="vchip" data-v="none"></span>' +
+        '<div class="vsent"></div>' +
+        '<div class="defgrid">' +
+          '<div><div class="k">Floor</div><div class="v fFloor">—</div></div>' +
+          '<div><div class="k">Threshold</div><div class="v fThr">—</div></div>' +
+          '<div><div class="k">Ceiling</div><div class="v fCeil">—</div></div>' +
+          '<div><div class="k">Headroom down</div><div class="v fDown">—</div></div>' +
+          '<div><div class="k">Headroom up</div><div class="v fUp">—</div></div>' +
+          '<div><div class="k">Span</div><div class="v fSpan">—</div></div>' +
+        '</div>' +
+        '<div class="field"><label for="gThr' + s + '">Threshold (RSSI counts, written to the timer)</label>' +
+          '<span style="display:flex;gap:8px"><input class="w-num gThr" id="gThr' + s + '" type="number" ' +
+          'min="0" max="8000" step="25" aria-label="Slot ' + s + ' threshold">' +
+          '<button type="button" class="ghost bSug">Use suggested</button></span></div>' +
+        '<div class="field"><label for="gFloor' + s + '">Floor (measured quiet level)</label>' +
+          '<input class="w-num gFloor" id="gFloor' + s + '" type="number" min="0" max="8000" step="10" ' +
+          'aria-label="Slot ' + s + ' floor"></div>' +
+        '<div class="field"><label for="gCeil' + s + '">Ceiling (peak of a real pass)</label>' +
+          '<input class="w-num gCeil" id="gCeil' + s + '" type="number" min="0" max="9000" step="10" ' +
+          'aria-label="Slot ' + s + ' ceiling"></div>' +
+        '<details><summary class="gainsum">Gain</summary>' +
+          '<div class="field"><label for="gGain' + s + '">Gain (0–63) — receiver amplification. ' +
+          'Changing it invalidates the measured bounds.</label>' +
+          '<input class="w-num-sm gGain" id="gGain' + s + '" type="number" min="0" max="63" step="1" ' +
+          'aria-label="Slot ' + s + ' gain"></div>' +
+          '<div class="cap stamp"></div>' +
+          '<button type="button" class="ghost bRemeasure" style="margin-top:8px">Remeasure this slot</button>' +
+        '</details>' +
+        '<div class="cap readback"></div>' +
+        '<div class="cap inlinewarn" style="color:var(--state-red)"></div>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+          '<button type="button" class="ghost bPeak">Reset peak</button>' +
+          '<button type="button" class="ghost bTest">Test detection</button>' +
+        '</div>' +
+      '</div>';
+    host.appendChild(b);
+    // wiring
+    const q = sel => b.querySelector(sel);
+    ['.gThr', '.gFloor', '.gCeil', '.gGain'].forEach(sel => {
+      const inp = q(sel);
+      inp.oninput = () => { inp.dataset.dirty = '1'; dirtySlots.add(s); q('.dirty').hidden = false;
+        renderWriteBar(); };
+    });
+    q('.gFloor').onchange = () => saveBounds(s, b);
+    q('.gCeil').onchange = () => saveBounds(s, b);
+    q('.bSug').onclick = () => {
+      const g = gateInfo(s), sug = suggestFor(s);
+      if (sug == null) { toast('No suggestion yet — measure this slot first.', 'warn'); return; }
+      q('.gThr').value = Math.round(sug); q('.gThr').dataset.dirty = '1';
+      dirtySlots.add(s); q('.dirty').hidden = false; renderWriteBar(); patchGate();
+    };
+    q('.bPeak').onclick = () => { peakHold[s] = 0; domains[s] = null; drawAllGate(); };
+    q('.bTest').onclick = () => { meterFlash[s] = Date.now();
+      toast('Test detection on slot ' + s + ' — no lap recorded.', 'info'); drawAllGate(); };
+    q('.bRemeasure').onclick = () => { setSurface('gate'); post('/api/cal/noise',
+      { preset: $('#calPreset').value }); };
+  });
+  gateBuilt = true;
+}
+function suggestFor(s) {
+  const r = ((S.cal && S.cal.results) || {})[String(s)];
+  if (r && r.suggested != null) return r.suggested;
+  const g = gateInfo(s);
+  if (g.floor == null || g.ceiling == null || g.span <= 120) return null;
+  const frac = { tiny: 0.62, small: 0.50, normal: 0.42, open: 0.32 }[(S.cal || {}).preset] || 0.42;
+  return Math.round(g.floor + g.span * frac);
+}
+function verdictSentence(s, g) {
+  const p = bySlot(s), who = 'Slot ' + s;
+  if (!g.hasData) return who + ' is silent — no RSSI from this receiver. Is the timer connected ' +
+    'and the VTX powered on ' + (p ? p.channel : '') + '?';
+  if (g.floor == null || g.ceiling == null)
+    return who + ' is not measured yet — run the two-step calibration above.';
+  if (g.verdict === 'fatal')
+    return who.toUpperCase() + ' WILL NEVER DETECT A LAP — the threshold (' +
+      Math.round(g.threshold) + ') is below the noise floor (' + Math.round(g.floor) + ').';
+  if (g.verdict === 'weak')
+    return 'Span too small (' + Math.round(g.span) + ' counts) — remeasure ' + who.toLowerCase() + '.';
+  if (g.verdict === 'marginal')
+    return who + ' is marginal — only ' + Math.round(g.span) + ' counts between quiet and a pass. ' +
+      'Move the gate closer or raise gain.';
+  return who + ' will detect laps — quiet sits ' + Math.round(g.headDown) +
+    ' below the line, your pass went ' + Math.round(g.headUp) + ' above.';
+}
+function renderGate() {
+  if (!S) return;
+  if (!gateBuilt) buildGate();
+  patchGate();
+  renderWizard();
+  renderScanControls();
+  renderFallback();
+}
+function patchGate() {
+  if (!S || !gateBuilt) return;
+  fitted().forEach(s => {
+    const b = $('#slotBlocks').querySelector('.slotblock[data-slot="' + s + '"]');
+    if (!b) return;
+    const q = sel => b.querySelector(sel);
+    const p = bySlot(s), g = gateInfo(s);
+    b.style.setProperty('--id', idColor(p));
+    q('.codechip').style.setProperty('--id', idColor(p));
+    q('.c3').textContent = code3(p ? p.name : '');
+    q('.pname').textContent = (p ? p.name : 'Slot ' + s) + (p && !p.enabled ? ' — not racing' : '');
+    const ch = (S.channels || []).find(c => p && c[0] === p.channel);
+    q('.psub').textContent = (p ? p.channel : '') + (ch ? ' · ' + ch[1] + ' MHz' : '') +
+      ' · rssi ' + (g.value == null ? '—' : Math.round(g.value)) +
+      (g.ageS != null ? ' · ' + (g.ageS < 3 ? 'live' : 'no data ' + Math.round(g.ageS) + 's') : '');
+    const vc = q('.vchip'); vc.dataset.v = g.verdict; vc.textContent = g.word;
+    q('.vsent').textContent = verdictSentence(s, g);
+    const set = (sel, v, cls) => { const e = q(sel); e.textContent = v;
+      e.className = 'v ' + sel.slice(1) + (cls ? ' ' + cls : ''); };
+    set('.fFloor', g.floor == null ? '—' : Math.round(g.floor));
+    set('.fCeil', g.ceiling == null ? '—' : Math.round(g.ceiling));
+    set('.fThr', g.threshold == null ? '—' : Math.round(g.threshold));
+    set('.fDown', g.headDown == null ? '—' : Math.round(g.headDown) + ' below',
+      g.headDown == null ? '' : g.headDown <= 0 ? 'bad' : g.headDown < 120 ? 'amber' : 'ok');
+    set('.fUp', g.headUp == null ? '—' : Math.round(g.headUp) + ' above',
+      g.headUp == null ? '' : g.headUp <= 0 ? 'bad' : g.headUp < 120 ? 'amber' : 'ok');
+    set('.fSpan', g.span == null ? '—' : Math.round(g.span) + ' counts',
+      g.span == null ? '' : g.span < 120 ? 'bad' : g.span < 400 ? 'amber' : 'ok');
+    const put = (sel, v) => { const e = q(sel); if (!isDirtyEl(e)) e.value = v == null ? '' : Math.round(v); };
+    put('.gThr', g.threshold); put('.gFloor', g.floor); put('.gCeil', g.ceiling); put('.gGain', g.gain);
+    q('.gainsum').textContent = 'Gain ' + g.gain + ' — receiver amplification';
+    const st = boundsStamp[s];
+    q('.stamp').textContent = st ? 'bounds measured ' + st.at + ' at gain ' + st.gain
+      : 'bounds never stamped on this browser';
+    const stale = st && st.gain !== g.gain;
+    b.dataset.stale = stale ? '1' : '0';
+    if (stale) q('.stamp').textContent += ' — BOUNDS STALE, remeasure this slot';
+    // timer readback
+    const rb = ((S.device && S.device.rfSetup) || {})[String(s)];
+    if (rb) {
+      const okT = g.threshold != null && Math.abs((rb.threshold || 0) - g.threshold) < 1;
+      const okG = Number(rb.gain) === Number(g.gain);
+      q('.readback').innerHTML = 'Timer reports threshold ' + Math.round(rb.threshold || 0) +
+        ' ' + (okT ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>') +
+        ' · gain ' + rb.gain + ' ' + (okG ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>') +
+        ' · ' + esc(rb.frequency || '') + ' MHz';
+    } else q('.readback').textContent = 'Timer has not reported this slot yet.';
+    // inline validation
+    const wantThr = Number(q('.gThr').value);
+    let warn = '';
+    if (isFinite(wantThr) && g.floor != null && wantThr <= g.floor)
+      warn = 'Refused: threshold ' + Math.round(wantThr) + ' is at or below the floor ' +
+        Math.round(g.floor) + ' — this slot could never report a lap.';
+    else if (g.span != null && g.span < 120)
+      warn = 'Refused: span ' + Math.round(g.span) + ' is under 120 counts — remeasure this slot.';
+    q('.inlinewarn').textContent = warn;
+    q('.dirty').hidden = !dirtySlots.has(s);
+    q('.scalestamp').textContent = (function () {
+      const d = domainFor(s, g);
+      return 'Scale locked ' + Math.round(d.lo) + '–' + Math.round(d.hi) + ' RSSI counts' +
+        (g.floor != null ? ' · bounds measured at gain ' + g.gain : '');
+    })();
+    const rate = (S.device && S.device.ble) ? '~10 Hz (BLE)' : '1 sample / 2.4 s (USB ASCII)';
+    const marks = (hitMarks[s] || []).filter(t => Date.now() - t < 90000);
+    q('.tracemeta').textContent = 'Last 90 s · ' + rate + ' · ' + marks.length + ' crossings' +
+      (marks.length ? ' · last ' + Math.round((Date.now() - marks[marks.length - 1]) / 1000) + 's ago' : '') +
+      ' · peak ' + Math.round(peakHold[s] || 0);
+  });
+  renderWriteBar();
+}
+function saveBounds(s, b) {
+  const fl = b.querySelector('.gFloor'), ce = b.querySelector('.gCeil');
+  const floor = fl.value === '' ? null : numOr(fl, null, 0, 8000);
+  const ceiling = ce.value === '' ? null : numOr(ce, null, 0, 9000);
+  fl.dataset.dirty = '0'; ce.dataset.dirty = '0';
+  post('/api/rf/bounds', { slot: s, floor: floor, ceiling: ceiling }).then(x => {
+    if (x.rfCfg) { S.rfCfg = x.rfCfg; domains[s] = null; }
+    boundsStamp[s] = { gain: gateInfo(s).gain, at: new Date().toTimeString().slice(0, 5) };
+    store('boundsStamp', boundsStamp);
+    toast(x.message || 'Bounds saved.', x.derived ? 'ok' : 'warn');
+    const t = b.querySelector('.gThr');
+    t.dataset.dirty = '0';
+    t.style.transition = 'none'; t.style.background = 'var(--step-on-bg)';
+    setTimeout(() => { t.style.transition = ''; t.style.background = ''; }, 600);
+    patchGate(); drawAllGate();
+  });
+}
+function renderWriteBar() {
+  const b = $('#bWrite'), r = $('#writeReason');
+  const n = dirtySlots.size;
+  b.textContent = writing ? 'Writing…' : (n ? 'Write ' + n + ' slot' + (n > 1 ? 's' : '') + ' to timer'
+    : 'Write to timer');
+  let reason = '';
+  if (raceLocked()) reason = 'Heat in progress';
+  else if (S && !S.device.canControl) reason = 'No control link — power-cycle the timer';
+  b.disabled = writing || !!reason || n === 0;
+  if (!reason && n === 0) reason = 'Nothing changed';
+  r.textContent = reason;
+}
+$('#bWrite').onclick = async () => {
+  const slots = [...dirtySlots];
+  const bad = [];
+  slots.forEach(s => {
+    const b = $('#slotBlocks').querySelector('.slotblock[data-slot="' + s + '"]');
+    if (b && b.querySelector('.inlinewarn').textContent) bad.push(s);
+  });
+  if (bad.length) { toast('Refused for slot ' + bad.join(', ') +
+    ' — see the inline reason on that block.', 'err'); return; }
+  writing = true; renderWriteBar();
+  let i = 0;
+  for (const s of slots) {
+    i++;
+    $('#bWrite').textContent = 'Writing ' + i + '/' + slots.length + '…';
+    const b = $('#slotBlocks').querySelector('.slotblock[data-slot="' + s + '"]');
+    const thr = numOr(b.querySelector('.gThr'), gateInfo(s).threshold, 0, 8000);
+    const gain = numOr(b.querySelector('.gGain'), gateInfo(s).gain, 0, 63);
+    const x = await post('/api/rf/tune', { slot: s, threshold: thr, gain: gain });
+    b.querySelector('.wrres').textContent = x.ok ? 'written ✓' : (x.message || 'failed');
+    b.querySelector('.wrres').className = 'cap wrres ' + (x.ok ? 'ok' : 'bad');
+    if (x.rfCfg) S.rfCfg = x.rfCfg;
+    if (x.ok) { b.querySelectorAll('input').forEach(e => e.dataset.dirty = '0'); }
+  }
+  await post('/api/config', { timerMinLapMs: numOr($('#tMinLap'), 3000, 0, 60000) });
+  dirtySlots.clear(); writing = false;
+  toast('Wrote ' + slots.length + ' slot(s). Verify against “timer reports” on each block.', 'ok');
+  patchGate(); drawAllGate();
+};
+
+/* ============================================================
+   12. THE INSTRUMENTS — locked scale, threshold is the one white line
+   ============================================================ */
+function prep(cv) {
+  const r = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return null;
+  if (cv.width !== Math.round(w * r)) { cv.width = Math.round(w * r); cv.height = Math.round(h * r); }
+  const x = cv.getContext('2d');
+  x.setTransform(r, 0, 0, r, 0, 0);
+  x.clearRect(0, 0, w, h);
+  x.font = '600 13px ' + (PAL.font || 'monospace');
+  return { x: x, w: w, h: h };
+}
+function drawMeter(cv, slot) {
+  const c = prep(cv); if (!c) return;
+  const { x, w, h } = c;
+  const g = gateInfo(slot);
+  const axH = 20, top = 0, botY = h - axH;
+  if (!g.hasData && g.floor == null) {
+    x.fillStyle = PAL.recess; x.fillRect(0, 0, w, botY);
+    x.strokeStyle = PAL.line; x.strokeRect(.5, .5, w - 1, botY - 1);
+    x.fillStyle = PAL.fg3;
+    x.fillText('No signal from slot ' + slot + ' — is the timer connected and the VTX powered?',
+      12, botY / 2);
+    x.fillText('Scale will lock once this slot is measured.', 12, botY / 2 + 18);
+    cv.setAttribute('aria-label', 'Slot ' + slot + ': no signal, not measured');
+    return;
+  }
+  const d = domainFor(slot, g);
+  const X = v => Math.max(0, Math.min(w, ((v - d.lo) / Math.max(1, d.hi - d.lo)) * w));
+  const thrX = g.threshold != null ? X(g.threshold) : null;
+  // zones split AT the threshold
+  x.fillStyle = PAL.nolap; x.fillRect(0, top, thrX == null ? w : thrX, botY);
+  if (thrX != null) { x.fillStyle = PAL.pass; x.fillRect(thrX, top, w - thrX, botY); }
+  x.fillStyle = PAL.fg3; x.fillText('NO LAP', 8, botY - 8);
+  if (thrX != null && w - thrX > 150) {
+    x.fillStyle = PAL.green; x.fillText('COUNTS AS A LAP', thrX + 10, botY - 8);
+  }
+  const fatal = g.verdict === 'fatal';
+  if (fatal) {
+    x.save(); x.beginPath(); x.rect(0, top, thrX == null ? w : thrX, botY); x.clip();
+    x.strokeStyle = PAL.fatal; x.lineWidth = 2; x.globalAlpha = .55;
+    for (let i = -botY; i < w + botY; i += 8) {
+      x.beginPath(); x.moveTo(i, botY); x.lineTo(i + botY, top); x.stroke();
+    }
+    x.restore();
+  }
+  // live bar + needle
+  if (g.value != null) {
+    const vX = X(g.value);
+    const over = g.threshold != null && g.value >= g.threshold;
+    const flash = meterFlash[slot] && Date.now() - meterFlash[slot] < 200;
+    x.globalAlpha = flash ? 1 : .9;
+    x.fillStyle = over ? PAL.green : PAL.trace;
+    x.fillRect(0, top + 18, vX, botY - 34);
+    x.globalAlpha = 1;
+    x.fillStyle = PAL.fg; x.fillRect(Math.max(0, vX - 1), top + 12, 2, botY - 22);
+  }
+  // floor / ceiling ticks
+  x.strokeStyle = PAL.bound; x.lineWidth = 1;
+  // on a phone-width canvas the words collide with the axis, so drop to values only
+  const narrow = w < 460;
+  [['FLOOR', g.floor], ['CEILING', g.ceiling]].forEach(([lab, v]) => {
+    if (v == null) return;
+    const vx = X(v);
+    x.beginPath(); x.moveTo(vx + .5, top); x.lineTo(vx + .5, botY); x.stroke();
+    const txt = narrow ? String(Math.round(v)) : lab + ' ' + Math.round(v);
+    const tw = x.measureText(txt).width;
+    x.fillStyle = PAL.fg3;
+    x.fillText(txt, Math.max(0, Math.min(w - tw - 2, vx + 4)), botY + 15);
+  });
+  // peak-hold caret (purple = "the best seen", same idea as a session-fastest lap)
+  if (peakHold[slot]) {
+    const px = X(peakHold[slot]);
+    x.fillStyle = PAL.peak;
+    x.beginPath(); x.moveTo(px, top + 2); x.lineTo(px - 6, top + 12); x.lineTo(px + 6, top + 12);
+    x.closePath(); x.fill();
+    const pk = (w < 460 ? '' : 'PEAK ') + Math.round(peakHold[slot]);
+    const pw = x.measureText(pk).width;
+    x.fillText(pk, Math.max(0, Math.min(w - pw - 2, px + 8)), top + 13);
+  }
+  // the threshold: the one pure-white rule, with a filled white chip
+  if (thrX != null) {
+    x.fillStyle = PAL.thr; x.fillRect(thrX - 1.5, top, 3, botY);
+    const label = String(Math.round(g.threshold));
+    const tw = x.measureText(label).width + 12;
+    const cx = Math.max(0, Math.min(w - tw, thrX - tw / 2));
+    x.fillRect(cx, top, tw, 18);
+    x.fillStyle = PAL.onId; x.fillText(label, cx + 6, top + 13);
+  }
+  if (fatal) {
+    x.strokeStyle = PAL.fatal; x.lineWidth = 2; x.strokeRect(1, 1, w - 2, botY - 2);
+    const msg = 'THRESHOLD BELOW NOISE FLOOR — THIS SLOT CANNOT DETECT A LAP';
+    x.font = '800 14px ' + (PAL.font || 'monospace');
+    const mw = x.measureText(msg).width;
+    x.fillStyle = PAL.fatal; x.fillRect((w - mw) / 2 - 10, botY / 2 - 14, mw + 20, 24);
+    x.fillStyle = '#fff'; x.fillText(msg, (w - mw) / 2, botY / 2 + 3);
+    x.font = '600 13px ' + (PAL.font || 'monospace');
+  }
+  // axis
+  x.fillStyle = PAL.fg3;
+  const divs = narrow ? 2 : 4;                 // fewer ticks so they cannot collide
+  for (let i = 0; i <= divs; i++) {
+    const v = d.lo + (d.hi - d.lo) * (i / divs);
+    const vx = (i / divs) * w;
+    const txt = String(Math.round(v));
+    const tw = x.measureText(txt).width;
+    x.fillText(txt, Math.max(0, Math.min(w - tw - 2, vx - tw / 2)), h - 4);
+  }
+  cv.setAttribute('aria-label', 'Slot ' + slot + ', RSSI ' +
+    (g.value == null ? 'unknown' : Math.round(g.value)) + ', threshold ' +
+    (g.threshold == null ? 'unset' : Math.round(g.threshold)) + ', ' +
+    (g.value != null && g.threshold != null
+      ? Math.abs(Math.round(g.value - g.threshold)) + (g.value >= g.threshold ? ' above' : ' below') + ' the line'
+      : 'no comparison'));
+}
+function drawTrace(cv, slot) {
+  const c = prep(cv); if (!c) return;
+  const { x, w, h } = c;
+  const g = gateInfo(slot);
+  const pts = (absSeries[slot] || []);
+  x.fillStyle = PAL.recess; x.fillRect(0, 0, w, h);
+  x.strokeStyle = PAL.line; x.strokeRect(.5, .5, w - 1, h - 1);
+  if (!pts.length) {
+    x.fillStyle = PAL.fg3;
+    x.fillText('No samples yet from slot ' + slot + ' — is the timer connected and the VTX powered?', 12, h / 2);
+    cv.setAttribute('aria-label', 'Slot ' + slot + ' trace: no samples');
+    return;
+  }
+  const d = domainFor(slot, g);
+  const now = Date.now(), win = 90000;
+  const X = t => w - ((now - t) / win) * w;
+  const Y = v => h - 14 - ((v - d.lo) / Math.max(1, d.hi - d.lo)) * (h - 26);
+  const thrY = g.threshold != null ? Y(g.threshold) : null;
+  if (thrY != null) { x.fillStyle = PAL.pass; x.fillRect(0, 0, w, Math.max(0, thrY)); }
+  // trace + green fill where it exceeds the line
+  x.beginPath();
+  pts.forEach((p, i) => { const px = X(p.t), py = Y(Math.max(d.lo, Math.min(d.hi, p.v)));
+    i ? x.lineTo(px, py) : x.moveTo(px, py); });
+  x.strokeStyle = PAL.trace; x.lineWidth = 1.8; x.stroke();
+  if (thrY != null) {
+    x.save(); x.beginPath(); x.rect(0, 0, w, Math.max(0, thrY)); x.clip();
+    x.beginPath();
+    pts.forEach((p, i) => { const px = X(p.t), py = Y(Math.max(d.lo, Math.min(d.hi, p.v)));
+      i ? x.lineTo(px, py) : x.moveTo(px, py); });
+    x.lineTo(X(pts[pts.length - 1].t), thrY); x.lineTo(X(pts[0].t), thrY); x.closePath();
+    x.fillStyle = PAL.pass; x.fill(); x.restore();
+  }
+  // over-range markers
+  pts.forEach(p => { if (p.v > d.hi) { x.fillStyle = PAL.fg;
+    x.fillText('▲', X(p.t) - 4, 12); } });
+  // floor / ceiling dotted
+  x.setLineDash([2, 3]); x.strokeStyle = PAL.bound; x.lineWidth = 1;
+  [['floor', g.floor], ['ceiling', g.ceiling]].forEach(([lab, v]) => {
+    if (v == null) return;
+    const vy = Y(v);
+    x.beginPath(); x.moveTo(0, vy); x.lineTo(w, vy); x.stroke();
+    x.fillStyle = PAL.fg3; x.fillText(lab + ' ' + Math.round(v), w - 110, vy - 4);
+  });
+  x.setLineDash([]);
+  // threshold: dashed pure white with a filled chip at the right edge
+  if (thrY != null) {
+    x.setLineDash([5, 4]); x.strokeStyle = PAL.thr; x.lineWidth = 2;
+    x.beginPath(); x.moveTo(0, thrY); x.lineTo(w, thrY); x.stroke(); x.setLineDash([]);
+    const lab = String(Math.round(g.threshold));
+    const tw = x.measureText(lab).width + 12;
+    x.fillStyle = PAL.thr; x.fillRect(w - tw - 2, thrY - 9, tw, 18);
+    x.fillStyle = PAL.onId; x.fillText(lab, w - tw + 4, thrY + 4);
+  }
+  // detections
+  (hitMarks[slot] || []).forEach(t => {
+    if (now - t > win) return;
+    const px = X(t);
+    x.fillStyle = PAL.thr;
+    x.beginPath(); x.moveTo(px, 2); x.lineTo(px - 5, 12); x.lineTo(px + 5, 12); x.closePath(); x.fill();
+  });
+  x.fillStyle = PAL.fg3;
+  x.fillText('LAST 90 S · ' + ((S.device && S.device.ble) ? '~10 Hz (BLE)' : '1 SAMPLE / 2.4 S (USB ASCII)'),
+    8, h - 4);
+  cv.setAttribute('aria-label', 'Slot ' + slot + ' RSSI trace over the last 90 seconds against a fixed scale');
+}
+function drawAllGate() {
+  if (surface === 'gate') {
+    fitted().forEach(s => {
+      const b = $('#slotBlocks').querySelector('.slotblock[data-slot="' + s + '"]');
+      if (!b) return;
+      drawMeter(b.querySelector('.meterc'), s);
+      const tr = b.querySelector('.tracec');
+      if (tr.clientHeight) drawTrace(tr, s);
+    });
+  }
+  if (surface === 'race' && S && S.race.solo) {
+    const cv = $('#soloView').querySelector('canvas[data-meter]');
+    if (cv) drawMeter(cv, +cv.dataset.meter);
+  }
+}
+setInterval(() => { if (surface === 'gate') drawAllGate(); }, 500);
+addEventListener('resize', () => { drawAllGate(); });
+
+/* ============================================================
+   13. CALIBRATION WIZARD
+   ============================================================ */
+function measuredSlots() {
+  const en = enabledPilots().map(p => p.slot);
+  return fitted().filter(s => en.includes(s));
+}
+function renderWizard() {
+  const cal = S.cal || {}, ph = cal.phase || 'idle';
+  if (ph !== calPhaseSeen) { calPhaseSeen = ph;
+    if (ph === 'noise' || ph === 'pass') calCounts = {}; }
+  $('#st1').className = 'stepc' + (ph === 'noise' ? ' on' : (['pass', 'done'].includes(ph) ? ' done' : ''));
+  $('#st2').className = 'stepc' + (ph === 'pass' ? ' on' : (ph === 'done' ? ' done' : ''));
+  $('#st3').className = 'stepc' + (ph === 'done' ? ' on' : '');
+  const sel = $('#calPreset');
+  if (!sel.options.length && cal.presets) {
+    sel.innerHTML = Object.entries(cal.presets).map(([k, v]) =>
+      '<option value="' + esc(k) + '">' + esc(v) + '</option>').join('');
+    sel.value = cal.preset;
+  }
+  const b = $('#bWiz'), ev = $('#wizEvidence');
+  const ms = measuredSlots();
+  const counts = ms.map(s => calCounts[s] || 0);
+  const enough = counts.length ? Math.min(...counts) : 0;
+  const short = ms.filter(s => (calCounts[s] || 0) < 8);
+  const rate = (S.device && S.device.ble) ? 'about 2 s on this connection'
+    : 'about 20 s on this connection (1 sample / 2.4 s over USB ASCII)';
+  const skipped = fitted().filter(s => !ms.includes(s));
+  const skipTxt = skipped.length ? ' · slots ' + skipped.join(', ') + ' skipped — not racing' : '';
+  b.className = 'go'; b.disabled = false;
+  if (ph === 'idle' || ph === 'done' && !Object.keys(cal.results || {}).length) {
+    b.textContent = 'Start — keep the gate clear';
+    b.onclick = () => post('/api/cal/noise', { preset: sel.value });
+    ev.textContent = 'Two steps: measure the quiet floor, then fly one pass.' + skipTxt;
+  } else if (ph === 'noise') {
+    b.textContent = short.length ? 'Next (need ' + Math.max(...short.map(s => 8 - (calCounts[s] || 0))) +
+      ' more on slot ' + short[0] + ')' : 'Next — fly one pass through the gate';
+    b.disabled = short.length > 0;
+    b.onclick = () => post('/api/cal/pass');
+    ev.textContent = 'Keep the gate clear — measuring noise. ' +
+      ms.map(s => 'S' + s + ' ' + (calCounts[s] || 0)).join(' · ') + ' samples · ' + rate + skipTxt;
+  } else if (ph === 'pass') {
+    const ok = ms.filter(s => { const g = gateInfo(s);
+      return g.floor != null && (peakHold[s] || 0) - g.floor > 400; });
+    b.textContent = 'Finish measuring' + (ok.length ? ' ✓' : '');
+    b.disabled = enough < 2;
+    b.onclick = () => post('/api/cal/finish');
+    ev.textContent = 'Fly one pass through the gate. ' + ms.map(s => {
+      const g = gateInfo(s), pk = Math.round(peakHold[s] || 0);
+      const clear = g.floor != null && pk - g.floor > 400;
+      return 'S' + s + ' peak ' + pk + (clear ? ' ✓' : '');
+    }).join(' · ') + skipTxt;
+  } else {
+    b.textContent = 'Apply to timer';
+    const reason = raceLocked() ? 'Heat in progress' : (!S.device.canControl ? 'No control link' : '');
+    b.disabled = !!reason;
+    b.onclick = () => post('/api/cal/apply').then(x => {
+      toast(x.message || 'Applied.', x.ok ? 'ok' : 'warn');
+      const now = new Date().toTimeString().slice(0, 5);
+      fitted().forEach(s => { boundsStamp[s] = { gain: gateInfo(s).gain, at: now }; });
+      store('boundsStamp', boundsStamp);
+      domains = {}; patchGate(); drawAllGate();
+    });
+    ev.textContent = reason || ('It places each threshold between the measured floor and ceiling, ' +
+      'biased by track type, and writes it to the timer.');
+  }
+  $('#bWizOver').onclick = () => post('/api/cal/noise', { preset: sel.value })
+    .then(() => { calCounts = {}; toast('Calibration restarted at step 1.', 'info'); });
+  sel.onchange = () => post('/api/cal/preset', { preset: sel.value });
+}
+
+/* ============================================================
+   14. SCANNER / FALLBACK / CONSOLE
+   ============================================================ */
+function renderScanControls() {
+  const sel = $('#scSlot');
+  if (!sel.options.length)
+    sel.innerHTML = fitted().map(s => '<option value="' + s + '">Slot ' + s + '</option>').join('');
+  const active = S.scan && S.scan.active;
+  $('#bScan').disabled = !!active || raceLocked() || !S.device.canControl;
+  $('#bScanStop').disabled = !active;
+  if (raceLocked()) $('#bScan').title = 'Heat in progress — scanning retunes the receiver';
+}
+function renderScan(sc) {
+  const host = $('#spec'), res = sc.results || [];
+  const out = $('#scOut');
+  if (!res.length && !sc.active) { host.innerHTML = ''; $('#specAx').textContent = ''; return; }
+  const peak = Math.max(1, ...res.map(r => r.peak));
+  const best = res.reduce((a, b) => (b.peak > ((a && a.peak) || -1) ? b : a), null);
+  host.innerHTML = '';
+  res.forEach((r, i) => {
+    const d = el('div', (best && r.name === best.name && r.peak > 0) ? 'top'
+      : (i === sc.index && sc.active ? 'cur' : ''));
+    d.style.height = Math.max(2, (r.peak / peak) * 100) + '%';
+    d.title = r.name + ' · ' + r.freq + ' MHz · peak ' + r.peak;
+    host.appendChild(d);
+  });
+  $('#specAx').textContent = res.length
+    ? res[0].name + ' … ' + res[Math.floor(res.length / 2)].name + ' … ' + res[res.length - 1].name
+    : '';
+  out.textContent = sc.active
+    ? 'Scanning ' + (res.length ? res[res.length - 1].name : '') + ' — ' + res.length + '/40 · about ' +
+      Math.max(0, Math.round((40 - res.length) * 0.45)) + 's left'
+    : (best && best.peak > 0 ? 'Strongest: ' + best.name + ' · ' + best.freq + ' MHz (' + best.peak + ')'
+      : 'Sweeps one receiver across every channel. The slot stops timing while it scans.');
+  renderScanControls();
+}
+$('#bScan').onclick = () => post('/api/scan/start', { slot: +$('#scSlot').value })
+  .then(x => { if (!x.ok) toast(x.message || 'Scan refused', 'warn'); });
+$('#bScanStop').onclick = () => post('/api/scan/stop').then(() => toast('Scan stopped.', 'ok'));
+function renderFallback() {
+  const ascii = S.device.mode === 'ascii' && !S.device.ble;
+  $('#fbNote').textContent = ascii
+    ? 'The timer is stuck in USB ASCII mode, so it cannot report passes itself. This software ' +
+      'detector watches the debug stream (one sample every 2.4 s) and can count crossings as laps.'
+    : 'Only needed if the timer itself will not detect. This is a different quantity from the gate ' +
+      'threshold: it is counts ABOVE the quiet baseline, not an absolute RSSI.';
+  if (ascii) $('#advanced').open = true;
+  if (S.signal) {
+    const t = $('#thSet');
+    if (document.activeElement !== t) { t.value = S.signal.threshold; $('#thVal').textContent = S.signal.threshold; }
+    setToggle($('#autoDet'), S.signal.autoDetect, 'Counting laps', 'Off');
+    $('#fbPeaks').textContent = Object.entries(S.signal.slots || {}).map(([s, v]) =>
+      'S' + s + ' delta ' + Math.round(v.delta) + ' peak ' + Math.round(v.peak) +
+      ' baseline ' + (v.baseline == null ? 'unset' : Math.round(v.baseline))).join(' · ');
+  }
+}
+$('#bCal').onclick = () => post('/api/signal/calibrate').then(x => {
+  if (x.baselines) toast('Baselines set: ' + Object.values(x.baselines)
+    .map(v => Math.round(v)).join(' / '), 'ok');
+});
+$('#thSet').oninput = e => $('#thVal').textContent = e.target.value;
+$('#thSet').onchange = e => post('/api/signal/config', { threshold: +e.target.value });
+$('#autoDet').onclick = () => {
+  const on = $('#autoDet').getAttribute('aria-pressed') !== 'true';
+  post('/api/signal/config', { autoDetect: on });
+};
+let consoleLines = [];
+function pushConsole(line) {
+  consoleLines.push(line); consoleLines = consoleLines.slice(-200);
+  const host = $('#console');
+  const atEnd = host.scrollTop + host.clientHeight >= host.scrollHeight - 20;
+  host.appendChild(el('div', '', line));
+  while (host.children.length > 200) host.removeChild(host.firstChild);
+  if (atEnd) host.scrollTop = host.scrollHeight;
+}
+fetch('/api/console').then(r => r.json()).then(d =>
+  (d.lines || []).slice(-100).forEach(l => pushConsole(l.text))).catch(() => {});
+
+/* ============================================================
+   15. SETUP SURFACE
+   ============================================================ */
+function setToggle(b, on, onLabel, offLabel) {
+  b.setAttribute('aria-pressed', String(!!on));
+  b.lastElementChild.textContent = on ? onLabel : offLabel;
+}
+let rosterPick = null;
+function renderSetup() {
+  const r = S.race;
+  // roster
+  const host = $('#rosterList');
+  host.innerHTML = '';
+  const roster = S.roster || [];
+  if (!roster.length) {
+    host.appendChild(el('div', 'cap', 'No saved pilots yet — set the four names below, ' +
+      'then press “Save this lineup”.'));
+  }
+  roster.forEach((e, i) => {
+    const b = el('button', 'rosteritem'); b.type = 'button';
+    b.setAttribute('aria-pressed', String(rosterPick === i));
+    const left = el('div');
+    left.appendChild(el('div', '', e.name));
+    left.appendChild(el('div', 'cap', 'usual channel ' + (e.channel || '—')));
+    b.appendChild(left);
+    b.appendChild(el('span', 'cap', rosterPick === i ? 'pick a slot →' : 'assign'));
+    b.onclick = () => { rosterPick = rosterPick === i ? null : i; renderSetup(); };
+    host.appendChild(b);
+  });
+  // slots
+  const grid = $('#slotGrid');
+  grid.innerHTML = '';
+  pilots().forEach(p => {
+    const d = el('div', 'slotdrop' + (rosterPick != null ? ' armed' : ''));
+    d.style.setProperty('--id', idColor(p));
+    const top = el('div'); top.style.cssText = 'display:flex;gap:12px;align-items:center';
+    const chip = el('div', 'codechip'); chip.style.setProperty('--id', idColor(p));
+    chip.appendChild(el('span', '', code3(p.name)));
+    chip.appendChild(el('span', 'slotn num', String(p.slot)));
+    top.appendChild(chip);
+    const nameIn = el('input'); nameIn.type = 'text'; nameIn.value = p.name;
+    nameIn.setAttribute('aria-label', 'Pilot ' + p.slot + ' name');
+    nameIn.style.flex = '1';
+    nameIn.onchange = () => post('/api/pilot', { slot: p.slot, name: nameIn.value });
+    top.appendChild(nameIn);
+    d.appendChild(top);
+    const row = el('div'); row.style.cssText = 'display:flex;gap:12px;align-items:center';
+    const chan = el('select'); chan.setAttribute('aria-label', 'Pilot ' + p.slot + ' channel');
+    chan.innerHTML = (S.channels || []).map(([n, f]) =>
+      '<option value="' + esc(n) + '">' + esc(n) + ' · ' + f + ' MHz</option>').join('');
+    chan.value = p.channel;
+    chan.onchange = () => post('/api/pilot', { slot: p.slot, channel: chan.value });
+    row.appendChild(chan);
+    const tg = el('button', 'toggle'); tg.type = 'button';
+    tg.appendChild(el('span', 'pip')); tg.appendChild(el('span', ''));
+    setToggle(tg, p.enabled, 'Racing', 'Out');
+    tg.onclick = () => post('/api/pilot', { slot: p.slot, enabled: !p.enabled });
+    row.appendChild(tg);
+    d.appendChild(row);
+    const g = gateInfo(p.slot);
+    const v = el('div', 'cap');
+    v.textContent = 'Gate: ' + g.word + (g.threshold != null ? ' · threshold ' + Math.round(g.threshold) : '');
+    d.appendChild(v);
+    d.onclick = ev => {
+      if (rosterPick == null || ev.target.closest('input,select,button')) return;
+      const e = (S.roster || [])[rosterPick];
+      if (!e) return;
+      post('/api/pilot', { slot: p.slot, name: e.name, channel: e.channel || p.channel,
+        colour: e.colour || null, enabled: true });
+      rosterPick = null;
+    };
+    grid.appendChild(d);
+  });
+  // format
+  $$('#segMode button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.m === r.mode)));
+  $('#fRowLaps').hidden = r.mode !== 'laps';
+  $('#fRowSecs').hidden = r.mode !== 'time';
+  $('#fRowConsec').hidden = r.mode !== 'consecutive';
+  const set = (id, v) => { const e = byId(id); if (document.activeElement !== e) e.value = v; };
+  set('fLaps', r.targetLaps); set('fSecs', r.targetSeconds); set('fConsec', r.consecN);
+  set('fCount', r.countdown_s); set('fMin', r.minLap);
+  set('tMinLap', (S.settings && S.settings.timerMinLapMs) != null ? S.settings.timerMinLapMs : 3000);
+  setToggle($('#fHole'), r.holeshot, 'On', 'Off');
+  const diff = Math.abs(Number(r.minLap) - Number($('#tMinLap').value) / 1000);
+  const w = $('#minLapWarn');
+  w.hidden = !(diff > 0.5);
+  w.textContent = 'App and timer minimum lap differ by ' + diff.toFixed(1) + 's.';
+  setToggle($('#vOn'), prefs.voiceOn, 'On', 'Off');
+  renderBanner();
+}
+$('#bSaveLineup').onclick = () => {
+  const roster = (S.roster || []).slice();
+  pilots().forEach(p => {
+    if (!p.name) return;
+    const i = roster.findIndex(e => e.name === p.name);
+    const entry = { name: p.name, channel: p.channel, colour: p.color };
+    if (i >= 0) roster[i] = entry; else roster.push(entry);
+  });
+  post('/api/roster', { roster: roster }).then(x => {
+    if (x.roster) S.roster = x.roster; renderSetup(); toast('Lineup saved to the roster.', 'ok'); });
+};
+$('#bClearRoster').onclick = () => post('/api/roster', { roster: [] })
+  .then(() => { S.roster = []; rosterPick = null; renderSetup(); toast('Roster cleared.', 'ok'); });
+$$('#segMode button').forEach(b => b.onclick = () => { cfg({ mode: b.dataset.m }); });
+function cfg(extra) {
+  const body = Object.assign({
+    mode: (S && S.race.mode) || 'laps',
+    targetLaps: numOr($('#fLaps'), S.race.targetLaps, 1, 60),
+    targetSeconds: numOr($('#fSecs'), S.race.targetSeconds, 10, 3600),
+    bestConsecutive: numOr($('#fConsec'), S.race.consecN, 2, 10),
+    countdown: numOr($('#fCount'), S.race.countdown_s, 0, 30),
+    minLap: numOr($('#fMin'), S.race.minLap, 0, 60),
+    holeshot: $('#fHole').getAttribute('aria-pressed') === 'true',
+  }, extra || {});
+  if (!extra || extra.timerMinLapMs === undefined)
+    body.timerMinLapMs = Math.round(body.minLap * 1000);
+  return post('/api/config', body);
+}
+['fLaps', 'fSecs', 'fConsec', 'fCount', 'fMin'].forEach(id => byId(id).onchange = () => cfg());
+$('#fHole').onclick = () => {
+  const on = $('#fHole').getAttribute('aria-pressed') !== 'true';
+  setToggle($('#fHole'), on, 'On', 'Off'); cfg();
+};
+$('#tMinLap').onchange = () => cfg({ timerMinLapMs: numOr($('#tMinLap'), 3000, 0, 60000) });
+$('#heatName').onchange = () => post('/api/config', { name: $('#heatName').value });
+$('#fmtLine').onclick = () => setSurface('setup');
+$('#vOn').onclick = () => { prefs.voiceOn = !prefs.voiceOn; store('prefs', prefs);
+  setToggle($('#vOn'), prefs.voiceOn, 'On', 'Off'); renderHealth(); };
+$('#vSel').onchange = () => { prefs.voiceName = (voices[$('#vSel').value] || {}).name || '';
+  store('prefs', prefs); loadVoices(); };
+$('#vRate').onchange = () => { prefs.rate = parseFloat($('#vRate').value); store('prefs', prefs); };
+$('#vTest').onclick = () => { armAudio(true); setTimeout(() => say('Lap 3, 9 point 4, personal best'), 400); };
+$('#cVoice').onclick = () => armAudio(true);
+$('#bTheme').onclick = () => {
+  const day = document.documentElement.getAttribute('data-theme') === 'day';
+  document.documentElement.setAttribute('data-theme', day ? 'dark' : 'day');
+  $('#bTheme').setAttribute('aria-pressed', String(!day));
+  $('#bTheme').textContent = day ? 'Day' : 'Night';
+  prefs.theme = day ? 'dark' : 'day'; store('prefs', prefs);
+  readPalette(); drawAllGate();
+};
+
+/* ============================================================
+   16. HISTORY
+   ============================================================ */
+function loadHistory() {
+  fetch('/api/history').then(r => r.json()).then(d => { history = d.races || []; renderHistory(); })
+    .catch(() => toast('Could not load history.', 'err'));
+}
+function renderHistory() {
+  const best = {};
+  history.forEach(h => (h.results || []).forEach(e => {
+    const key = e.slot + '|' + (e.name || '');
+    const b = best[key] || { name: e.name, best: null, consec: null, races: 0 };
+    if (e.best != null && (b.best == null || e.best < b.best)) b.best = e.best;
+    if (e.consec != null && (b.consec == null || e.consec < b.consec)) b.consec = e.consec;
+    b.races++; best[key] = b;
+  }));
+  const rows = $('#sessionRows');
+  rows.innerHTML = '';
+  const entries = Object.values(best);
+  if (!entries.length) {
+    const tr = el('tr'); const td = el('td', '', 'No completed races yet.');
+    td.colSpan = 4; tr.appendChild(td); rows.appendChild(tr);
+  }
+  entries.forEach(b => {
+    const tr = el('tr');
+    tr.appendChild(el('td', '', b.name));
+    const t1 = el('td', 'n r', fmt3(b.best)); tr.appendChild(t1);
+    tr.appendChild(el('td', 'n r', fmt3(b.consec)));
+    tr.appendChild(el('td', 'n r', String(b.races)));
+    rows.appendChild(tr);
+  });
+  const host = $('#histOut');
+  host.innerHTML = '';
+  if (!history.length) host.appendChild(el('div', 'cap', 'No races saved yet.'));
+  history.slice().reverse().slice(0, 15).forEach(h => {
+    const card = el('div');
+    const when = new Date((h.at || 0) * 1000).toLocaleString();
+    const head = el('div'); head.style.cssText = 'display:flex;gap:12px;align-items:baseline';
+    head.appendChild(el('b', '', h.name || 'Race'));
+    head.appendChild(el('span', 'cap', when + ' · ' + h.mode + ' · ' +
+      (h.duration != null ? Number(h.duration).toFixed(1) + 's' : '')));
+    card.appendChild(head);
+    let fastest = null;
+    (h.results || []).forEach(e => { if (e.best != null && (fastest == null || e.best < fastest)) fastest = e.best; });
+    const t = el('table');
+    t.innerHTML = '<thead><tr><th scope="col">Pos</th><th scope="col">Pilot</th>' +
+      '<th scope="col" class="r">Laps</th><th scope="col" class="r">Best</th>' +
+      '<th scope="col" class="r">Best consec</th></tr></thead>';
+    const tb = el('tbody');
+    (h.results || []).forEach(e => {
+      const tr = el('tr');
+      tr.appendChild(el('td', 'n', String(e.pos)));
+      const nm = el('td', '', e.name);
+      tr.appendChild(nm);
+      tr.appendChild(el('td', 'n r', String(e.laps)));
+      const bt = el('td', 'n r', fmt3(e.best));
+      if (e.best != null && fastest != null && Math.abs(e.best - fastest) < 1e-9) bt.classList.add('t-purple');
+      tr.appendChild(bt);
+      tr.appendChild(el('td', 'n r', fmt3(e.consec)));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); card.appendChild(t);
+    host.appendChild(card);
+  });
+  $('#bCsv').setAttribute('download',
+    'whooptimer-' + new Date().toISOString().slice(0, 10) + '.csv');
+}
+$('#bClearHist').onclick = () => {
+  if (!confirm('Delete all saved race history? This cannot be undone.')) return;
+  post('/api/history/clear').then(() => { loadHistory(); toast('History cleared.', 'ok'); });
+};
+$('#bCsv').onclick = () => toast('CSV downloaded.', 'ok');
+
+/* ============================================================
+   17. MAIN RENDER
+   ============================================================ */
+function render() {
+  if (!S) return;
+  if (document.activeElement !== $('#heatName'))
+    $('#heatName').value = S.race.name || $('#heatName').value || 'Heat 1';
+  renderHealth();
+  renderBand();
+  stateTransitions();
+  trackLaps();
+  renderTower();
+  renderTicker();
+  renderTrigs();
+  renderPrimary();
+  renderStaging();
+  if (surface === 'setup') renderSetup(); else renderBanner();
+  if (surface === 'gate') { renderGate(); drawAllGate(); }
+  else if (gateBuilt) renderWriteBar();
+  if (S.scan) renderScan(S.scan);
+}
+
+/* ============================================================
+   18. SECONDARY ACTIONS
+   ============================================================ */
+$('#bStartNow').onclick = () => {
+  const laps = pilots().reduce((a, p) => a + p.lapCount, 0);
+  if (laps && !confirm('Start now discards ' + laps + ' recorded laps. Continue?')) return;
+  post('/api/race/start');
+};
+let holdT = null;
+function beginHold() {
+  if ($('#bReset').disabled) return;
+  $('#bReset').classList.add('holding');
+  holdT = setTimeout(() => {
+    $('#bReset').classList.remove('holding');
+    post('/api/race/reset').then(() => toast('Race reset — laps discarded.', 'warn'));
+  }, 800);
+}
+function endHold() { clearTimeout(holdT); $('#bReset').classList.remove('holding'); }
+$('#bReset').addEventListener('pointerdown', beginHold);
+['pointerup', 'pointerleave', 'blur'].forEach(e => $('#bReset').addEventListener(e, endHold));
+$('#bReset').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') beginHold(); });
+$('#bReset').addEventListener('keyup', endHold);
+
+/* ============================================================
+   19. KEYBOARD
+   ============================================================ */
+addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  const t = e.target;
+  // ignore real controls, but NOT the tower rows / scroll regions that merely
+  // carry tabindex - 1-4 and Space must stay live after clicking a row
+  if (t && t.closest && (t.isContentEditable ||
+      t.closest('input,select,textarea,button,a,summary'))) {
+    if (e.key === 'Escape') t.blur();
+    return;
+  }
+  if (e.key >= '1' && e.key <= '4') { e.preventDefault(); simPass(+e.key); return; }
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (!S) return;
+    const st = S.race.state;
+    if (st === 'idle') { if (enabledPilots().length) post('/api/race/arm');
+      else toast('No pilots are racing.', 'warn'); }
+    else if (st === 'staging') post('/api/race/reset').then(() => toast('Count-in cancelled.', 'ok'));
+    else if (st === 'running') post('/api/race/stop');
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if (k === 'g') { gapMode = gapMode === 'gap' ? 'int' : 'gap'; renderTowerValues();
+    toast(gapMode === 'gap' ? 'Gap to leader' : 'Interval to the pilot ahead', 'info'); }
+  else if (k === 'p') { pinSlotOrder = !pinSlotOrder; renderTower();
+    toast(pinSlotOrder ? 'Tower pinned to slot order' : 'Tower follows standings', 'info'); }
+  else if (k === 'h') {
+    const en = enabledPilots().map(p => p.slot);
+    const i = heroSlot == null ? -1 : en.indexOf(heroSlot);
+    heroSlot = i + 1 >= en.length ? null : en[i + 1];
+    renderTowerValues();
+  }
+  else if (k === 'f') {
+    present = !present;
+    document.body.classList.toggle('present', present);
+    if (present && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+    else if (!present && document.exitFullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    setTimeout(() => { renderTower(); drawAllGate(); }, 60);
+  }
+  else if (e.key === 'Escape') {
+    if (present) { present = false; document.body.classList.remove('present');
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); return; }
+    if (surface !== 'race') setSurface('race');
+    else if (S && S.race.state === 'idle') setSurface('setup');
+    else toast('Heat in progress — stop it first to reach setup.', 'warn');
+  }
+});
+
+/* ============================================================
+   20. BOOT
+   ============================================================ */
+if (prefs.theme === 'day') {
+  document.documentElement.setAttribute('data-theme', 'day');
+  $('#bTheme').setAttribute('aria-pressed', 'true');
+  $('#bTheme').textContent = 'Night';
+}
+$('#vRate').value = prefs.rate || 1.1;
+readPalette();
+matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',
+  e => { reduceMotion = e.matches; });
+fetch('/api/state').then(r => r.json()).then(d => { S = d; render(); })
+  .catch(() => toast('Cannot reach the WhoopTimer server.', 'err'));
+loadHistory();
+renderHealth();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# WhoopTimer launcher. Serves the race UI and opens it.
+cd "$(dirname "$(readlink -f "$0")")"
+PORT="${PORT:-8080}"
+if [ ! -r /dev/ttyACM0 ]; then
+  echo "Note: /dev/ttyACM0 not readable by $(whoami)."
+  echo "You're in the 'uucp' group but need to log out and back in for it to apply."
+  echo "Running under sudo for now."
+  exec sudo python3 server.py --port "$PORT"
+fi
+( sleep 1.5; xdg-open "http://127.0.0.1:$PORT" >/dev/null 2>&1 ) &
+exec python3 server.py --port "$PORT"

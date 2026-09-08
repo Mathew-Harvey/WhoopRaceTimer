@@ -1,0 +1,10 @@
+# runtime state — pilots, settings, thresholds, race history
+data/
+
+# working backups and captures
+backups/
+
+__pycache__/
+*.pyc
+*.pyo
+.venv/

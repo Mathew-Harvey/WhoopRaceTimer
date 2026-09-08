@@ -952,15 +952,16 @@ SCREENS.gate = app => {
           if (app.race.active) toast('Saved — it reaches the timer when the session ends');
           app.markStructural();
         } });
+      const passLine = h('div.passline');
       const card = h('div.gateslot',
         h('header',
           h('span.chanchip', h('span.swatch', { style: { background: idVar(slot) } }),
             h('span.name', p.channel),
             h('span.freq', `slot ${slot}`)),
           h('label.trig', h('span.cap', 'Trigger'), thrInput)),
-        verdict, canvas, readout);
+        verdict, canvas, readout, passLine);
       slotBox.appendChild(card);
-      slotCards.set(slot, { canvas, verdict, readout, thrInput });
+      slotCards.set(slot, { canvas, verdict, readout, thrInput, passLine });
     }
     if (!showAll) {
       slotBox.appendChild(h('button.ghost', {
@@ -1049,15 +1050,57 @@ SCREENS.gate = app => {
           kv('Quiet', cfg.floor == null ? 'not measured' : Math.round(cfg.floor)),
           kv('Pass peak', cfg.ceiling == null ? 'not measured' : Math.round(cfg.ceiling)));
       }
+      renderPassLine(app, slot, ref, sig, shownThr);
       if (paint) {
         drawMeter(ref.canvas, { live, floor: cfg.floor, ceiling: cfg.ceiling,
-                                threshold: shownThr, series: sig?.series() || [] });
+                                threshold: shownThr, series: sig?.series() || [],
+                                passes: sig?.passes || [] });
       }
     }
   };
   update();
   return { node, update };
 };
+
+/**
+ * What this slot has actually seen, and the one action worth offering.
+ *
+ * Tuning a gate used to mean flying, seeing no lap, and having no way to tell
+ * whether the trigger was too high or the quad simply had not crossed. This
+ * line closes that: it counts the passes, says how many would have been timed,
+ * and when one missed it offers the number that would have caught it — one tap,
+ * no arithmetic, no slider hunting.
+ */
+function renderPassLine(app, slot, ref, sig, threshold) {
+  const rep = tuning.passReport(sig?.passes || [], threshold);
+  const key = `${rep.seen}|${rep.counted}|${rep.worstMiss}|${Math.round(threshold ?? -1)}`;
+  if (ref.passLine._t === key) return;
+  ref.passLine._t = key;
+
+  if (!rep.seen) {
+    mount(ref.passLine, h('span.muted', 'No pass seen yet — fly through the gate.'));
+    return;
+  }
+  const tone = rep.verdict === 'good' ? 'ok' : rep.missed === rep.seen ? 'bad' : 'warn';
+  const words = rep.verdict === 'good'
+    ? `${plural(rep.seen, 'pass', 'passes')} seen, all would count.`
+    : `${plural(rep.seen, 'pass', 'passes')} seen — ${rep.counted} would count, ` +
+      `${rep.missed} missed by up to ${Math.round(rep.worstMiss)}.`;
+  const kids = [h('span.dot', { 'data-tone': tone }), h('span', words)];
+  /* Only offer the fix when there is one: a suggestion that cannot separate a
+   * pass from the noise is not an improvement, it is a different mistake. */
+  if (rep.missed && rep.suggest != null && Math.round(rep.suggest) !== Math.round(threshold ?? -1)) {
+    kids.push(h('button.ghost', {
+      onclick: () => {
+        app.saveRf(slot, { threshold: rep.suggest });
+        app.pushConfig([slot], { now: true });
+        sig.clearPasses();          // the old verdicts judged a trigger that is gone
+        toast(`Slot ${slot} trigger set to ${Math.round(rep.suggest)} — fly it again to confirm`, 'ok');
+        app.markStructural();
+      } }, `Use ${Math.round(rep.suggest)}`));
+  }
+  mount(ref.passLine, ...kids);
+}
 
 const kv = (label, value) => h('div', h('div.cap', label),
   h('div.num', { style: { fontSize: 'var(--t-17)', fontWeight: '700' } }, String(value)));
@@ -1095,7 +1138,7 @@ function applyCalibration(app) {
   app.render();
 }
 
-function drawMeter(cv, { live, floor, ceiling, threshold, series }) {
+function drawMeter(cv, { live, floor, ceiling, threshold, series, passes }) {
   const dpr = Math.min(2, devicePixelRatio || 1);
   const w = cv.clientWidth || 600, hgt = cv.clientHeight || 120;
   if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hgt * dpr); }
@@ -1137,6 +1180,25 @@ function drawMeter(cv, { live, floor, ceiling, threshold, series }) {
   line(floor, col('--m-bound'), [4, 4]);
   line(ceiling, col('--m-peak'), [4, 4]);
   line(threshold, col('--thr-line'));
+
+  /* Every excursion the watcher saw, at its peak, on the time axis of the
+   * trace. Green cleared the trigger; red did not. A red dot sitting just under
+   * the line is the whole tuning problem made visible in one glance — and it is
+   * information that otherwise does not exist anywhere on screen, because a
+   * pass that missed produces no lap and no record of having happened. */
+  if (passes?.length && series.length > 1) {
+    const t0 = series[0].t, t1 = series[series.length - 1].t;
+    const span = t1 - t0;
+    for (const p of passes) {
+      if (span <= 0 || p.at < t0 || p.at > t1) continue;
+      const x = ((p.at - t0) / span) * w;
+      g.beginPath();
+      g.fillStyle = col(p.counted ? '--state-green' : '--state-red');
+      g.arc(x, y(p.peak), 4, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = col('--surface-1'); g.lineWidth = 1.5; g.stroke();
+    }
+  }
   g.fillStyle = col('--fg-3');
   g.font = '600 11px ' + col('--font-cond');
   if (threshold != null) g.fillText('TRIGGER ' + Math.round(threshold), 6, Math.max(12, y(threshold) - 5));

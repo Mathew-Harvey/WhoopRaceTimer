@@ -120,11 +120,12 @@ export class Calibration {
     this.ceiling = {};          // slot -> measured pass peak
     this.counts = {};           // slot -> samples seen this phase
     this._samples = {};
+    this._win = {};             // slot -> {a,b} highest and second-highest
   }
 
   beginNoise(slots) {
     this.phase = 'noise';
-    this.floor = {}; this.ceiling = {}; this.counts = {};
+    this.floor = {}; this.ceiling = {}; this.counts = {}; this._win = {};
     this._samples = Object.fromEntries(slots.map(s => [s, []]));
   }
 
@@ -136,7 +137,7 @@ export class Calibration {
       }
     }
     this.phase = 'pass';
-    this.counts = {};
+    this.counts = {}; this._win = {};
     this._samples = Object.fromEntries(slots.map(s => [s, []]));
   }
 
@@ -145,11 +146,35 @@ export class Calibration {
     if (!(slot in this._samples)) return;
     this._samples[slot].push(value);
     this.counts[slot] = (this.counts[slot] || 0) + 1;
-    if (this.phase === 'pass') this.ceiling[slot] = Math.max(this.ceiling[slot] || 0, value);
+    /* The ceiling is the peak of a real pass, and it used to be the raw maximum
+     * — while the floor beside it was deliberately a median, because a stray
+     * spike must not move it. The asymmetry cost laps: one spurious sample
+     * raised the ceiling, which raised the derived trigger, which made the gate
+     * less sensitive than was asked for, silently and in the direction that
+     * loses passes.
+     *
+     * So: the second-highest reading, not the highest. It is the same idiom the
+     * channel scanner already uses to stop one transient electing a channel. A
+     * lone spike is always the highest and never the second, so it is ignored
+     * outright; two consecutive high samples are a signal rather than a glitch
+     * and are believed. Smoothing was the wrong tool here — at the rate status
+     * records arrive, a genuine peak is often a single sample, and a median
+     * would have clipped every one of them and dragged triggers the other way.
+     *
+     * On one flown lap this reads the shoulder rather than the tip, an
+     * under-read of a few percent that errs toward a more sensitive gate. Over
+     * the several laps the wizard asks for, the second-highest is another lap's
+     * peak, and the error goes away. */
+    if (this.phase === 'pass') {
+      const t = (this._win[slot] ||= { a: -Infinity, b: -Infinity });
+      if (value > t.a) { t.b = t.a; t.a = value; }
+      else if (value > t.b) { t.b = value; }
+      this.ceiling[slot] = isFinite(t.b) ? t.b : t.a;
+    }
   }
 
   finish() { this.phase = 'done'; return this.results(); }
-  cancel() { this.phase = 'idle'; this._samples = {}; this.counts = {}; }
+  cancel() { this.phase = 'idle'; this._samples = {}; this.counts = {}; this._win = {}; }
 
   results() {
     const frac = (PRESETS[this.preset] || PRESETS[DEFAULT_PRESET]).fraction;
@@ -187,6 +212,8 @@ export class SlotSignal {
     this.armed = true;
     this.detections = 0;
     this.lastAt = 0;
+    this.passes = [];       // recent excursions, judged against the trigger
+    this._pass = null;      // the excursion in progress, if any
   }
 
   add(value, t) {
@@ -229,6 +256,96 @@ export class SlotSignal {
   }
 
   series(n = 160) { return this.history.slice(-n); }
+
+  /* ---------------------------------------------------- pass observation --- */
+
+  /**
+   * Watch the live signal for excursions and remember each one.
+   *
+   * This is not lap timing — the LapRF does that in its own firmware, far
+   * faster than status records arrive here. It exists so the tuning screen can
+   * answer the only question that matters while someone is standing at a gate
+   * with a quad in their hand: *would that pass have counted?*
+   *
+   * The trick is to watch from lower down than the trigger. An excursion is
+   * tracked from a little above the quiet floor, so a pass that peaked just
+   * under the trigger is still seen and still measured — and a gate set too
+   * high stops being an absence of laps, which looks exactly like not having
+   * flown yet, and becomes "that one missed by 62".
+   *
+   * Hysteresis on the way out is PhobosLT's: closing on the same level that
+   * opened would let a signal sitting on the line rattle out a dozen passes.
+   */
+  observe(threshold, floor, t) {
+    const v = this.value;
+    if (v == null || threshold == null) return null;
+    const quiet = floor ?? this.quiet() ?? this.baseline;
+    if (quiet == null) return null;
+    t = t ?? this.lastAt ?? Date.now() / 1000;
+
+    /* Watch from a third of the way up to the trigger, with a floor under it so
+     * a quiet slot does not trip on its own jitter. */
+    const rise = Math.max(WATCH_MIN_RISE, (threshold - quiet) * WATCH_FRACTION);
+    const enter = quiet + rise;
+    const exit = quiet + rise * PASS_EXIT_FRACTION;
+
+    if (!this._pass) {
+      if (v >= enter) this._pass = { peak: v, at: t, start: t };
+      return null;
+    }
+    if (v > this._pass.peak) { this._pass.peak = v; this._pass.at = t; }
+    if (v >= exit) return null;
+
+    /* The excursion is over: judge it against the trigger as it stands. */
+    const done = this._pass;
+    this._pass = null;
+    if (done.peak < enter) return null;
+    const pass = { peak: done.peak, at: done.at, quiet,
+                   counted: done.peak >= threshold,
+                   margin: Math.round((done.peak - threshold) * 10) / 10 };
+    this.passes.push(pass);
+    while (this.passes.length > PASS_HISTORY) this.passes.shift();
+    return pass;
+  }
+
+  /** Forget what was seen — a new trigger deserves a fresh verdict. */
+  clearPasses() { this.passes = []; this._pass = null; }
+}
+
+/* How far above quiet an excursion has to rise before it is worth watching,
+ * as a fraction of the gap to the trigger, and never less than this in raw
+ * counts. Low enough to catch a pass that missed; high enough to ignore noise. */
+const WATCH_FRACTION = 0.34, WATCH_MIN_RISE = 60;
+/* Close an excursion well below where it opened, or a signal resting on the
+ * line reports a pass on every sample. */
+const PASS_EXIT_FRACTION = 0.7;
+const PASS_HISTORY = 12;
+
+/**
+ * What the passes seen so far say about a trigger, in one sentence and one
+ * number. This is the whole point of watching: not to time a lap, but to tell
+ * someone whether the level they are about to fly a race on is right.
+ */
+export function passReport(passes, threshold) {
+  const seen = passes.length;
+  if (!seen) return { seen: 0, counted: 0, missed: 0, verdict: 'none' };
+  const counted = passes.filter(p => p.counted).length;
+  const missed = seen - counted;
+  const peaks = passes.map(p => p.peak).sort((a, b) => a - b);
+  const weakest = peaks[0];
+  /* The suggestion has to clear the noise as well as sit under the weakest
+   * pass, so it is placed between the two rather than just below the peak. A
+   * trigger a hair under the weakest pass ever seen counts that pass and
+   * nothing else — the next slightly weaker one is lost. */
+  const quiet = Math.max(...passes.map(p => p.quiet));
+  const suggest = weakest - quiet > MIN_SPAN
+    ? Math.round((quiet + (weakest - quiet) * 0.55) * 10) / 10
+    : null;
+  const worstMiss = missed
+    ? Math.round(Math.min(...passes.filter(p => !p.counted).map(p => threshold - p.peak)) * 10) / 10
+    : 0;
+  const verdict = missed === 0 ? 'good' : counted === 0 ? 'all missed' : 'some missed';
+  return { seen, counted, missed, worstMiss, weakest, suggest, verdict };
 }
 
 export class SignalBank {

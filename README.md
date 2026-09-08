@@ -148,6 +148,26 @@ sent to it including the documented `Upp\r\n` binary-enable sequence, and carrie
 no passing records. The app detects that and says the USB link can show signal
 but will never time a lap.
 
+### Does that trigger actually work?
+
+The hard part of tuning a gate is that a trigger set too high produces nothing
+at all — no lap, no record, no complaint — which looks exactly like nobody
+having flown yet. So the gate screen watches every excursion in the signal from
+well below the trigger, and reports what it saw:
+
+```
+● 3 passes seen, all would count.
+● 3 passes seen — 1 would count, 2 missed by up to 704.   [Use 1670]
+```
+
+Each pass appears on that receiver's meter as a dot at its peak, green if it
+cleared the trigger and red if it did not. A row of red dots sitting just under
+the line is the whole problem in one glance, and the button beside it sets the
+level that would have caught them. Fly, look, tap, fly again.
+
+This is not lap timing — the LapRF does that in its own firmware, far faster
+than status records arrive here. It only answers whether the level is right.
+
 ## Setup check
 
 The page checks this machine on load and says nothing unless something is

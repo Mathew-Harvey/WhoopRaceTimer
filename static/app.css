@@ -258,6 +258,15 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
   background:var(--surface-1);background:color-mix(in srgb,var(--state-green) 10%,var(--surface-1));color:var(--fg)}
 .note strong{display:block;margin-bottom:2px}
 .note .act{margin-top:var(--s2)}
+/* The verdict under a gate's meter: what was seen, and the one button worth
+   offering. Wraps rather than truncates — the sentence is the point. */
+.passline{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap;
+  margin-top:var(--s2);font-size:var(--t-15);color:var(--fg-2);min-height:30px}
+.passline .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--fg-3)}
+.passline .dot[data-tone=ok]{background:var(--state-green)}
+.passline .dot[data-tone=warn]{background:var(--state-amber)}
+.passline .dot[data-tone=bad]{background:var(--state-red)}
+.passline button{padding:5px 12px;min-height:32px;font-size:var(--t-13);font-weight:700}
 /* A command block someone is about to paste into a terminal. It must survive
    being read on a phone: monospace so a flag is unambiguous, scrolling in its
    own box rather than pushing the page sideways, and wrapping off so a long

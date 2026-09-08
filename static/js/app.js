@@ -398,7 +398,20 @@ class App {
       if (val == null) continue;
       this.sig.add(slot, val);
       this.cal.feed(slot, val);
+      /* Watch every excursion against the trigger this slot is actually on, so
+       * the tuning screen can say whether a pass would have counted. A gate set
+       * too high otherwise reports nothing at all, which looks exactly like
+       * nobody having flown yet. */
+      this.sig.get(slot).observe(this.thresholdFor(slot), this.rfFor(slot).floor);
     }
+  }
+
+  /** The trigger this slot is really on: what was chosen here, else what the
+   *  timer says it holds. Nothing is invented — a slot the timer has not
+   *  described yet has no trigger to judge a pass against. */
+  thresholdFor(slot) {
+    const cfg = this.rfFor(slot);
+    return cfg.threshold ?? this.timer.rfSetup[slot]?.threshold ?? null;
   }
 
   /** Mirror what the hardware says about itself; never invent a default. */

@@ -9,6 +9,7 @@
  *   node tests/test_tuning.mjs
  */
 import { Calibration, SlotSignal, passReport, derive } from '../static/js/tuning.js';
+import { viewBytes } from '../static/js/link.js';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -19,6 +20,24 @@ function check(name, cond, detail) {
 const eq = (name, got, want) => check(name, got === want, `got ${got}, want ${want}`);
 const near = (name, got, want, tol = 0.51) =>
   check(name, Math.abs(got - want) <= tol, `got ${got}, want ~${want}`);
+
+/* --------------------------------------------------- reading a notification --- */
+/* Chrome hands out Bluetooth notifications as views into a buffer it reuses, so
+ * a notification's ArrayBuffer routinely holds the previous one as well. Taking
+ * the buffer instead of the view delivers every packet twice — once as itself
+ * and once as the tail of its successor — and every record then fails its CRC,
+ * which looks exactly like a receiver that cannot hear anything. */
+{
+  const pool = new ArrayBuffer(28);
+  new Uint8Array(pool).set([...Array(14).keys(), ...Array(14).keys()].map((n, i) => i < 14 ? n : n + 100));
+  const second = new DataView(pool, 14, 14);
+  const got = viewBytes(second);
+  eq('only this notification is taken', got.length, 14);
+  eq('and from the right offset', got[0], 100);
+  check('the buffer really did hold the previous packet too',
+        new Uint8Array(second.buffer).length === 28,
+        'the trap this guards against no longer exists in the fixture');
+}
 
 /* ------------------------------------------------------------- ceiling --- */
 /* A pass is several samples rising and falling; a spike is one sample. The

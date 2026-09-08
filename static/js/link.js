@@ -41,6 +41,25 @@ const STATUS_INTERVAL_MS = 200;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/**
+ * The bytes of one notification, and only those.
+ *
+ * A DataView is a window onto an ArrayBuffer, not the buffer itself, and
+ * Chrome hands out notifications as views into a buffer it reuses. Reading
+ * `.buffer` therefore returns whatever else is in that buffer — in practice the
+ * notification before this one, sitting at a lower offset. Every packet then
+ * arrives twice: once as itself, and once as the tail of its successor.
+ *
+ * The damage is invisible until the timer is asked to talk quickly. At a lazy
+ * rate each notification tends to get a fresh buffer and everything decodes; ask
+ * for signal five times a second, the buffer starts being recycled, and every
+ * single record fails its CRC — which reads, from the outside, exactly like a
+ * receiver that cannot hear anything.
+ */
+export function viewBytes(view) {
+  return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+}
+
 /* ---------------------------------------------------------------- base --- */
 
 export class LapRFLink {
@@ -168,7 +187,7 @@ export class BleLink extends LapRFLink {
     this.ctrl = null;
     this._stream = null;
     this._onDisc = () => this._dropped();
-    this._onValue = e => this.ingest(new Uint8Array(e.target.value.buffer));
+    this._onValue = e => this.ingest(viewBytes(e.target.value));
   }
 
   /**

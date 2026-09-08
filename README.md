@@ -148,6 +148,32 @@ sent to it including the documented `Upp\r\n` binary-enable sequence, and carrie
 no passing records. The app detects that and says the USB link can show signal
 but will never time a lap.
 
+## Setup check
+
+The page checks this machine on load and says nothing unless something is
+actually wrong. When something is, it names it and shows the exact commands —
+Bluetooth refused because the page is not on a secure origin, an adapter that is
+soft-blocked, or the one that costs people an afternoon: **Chrome and Chromium
+on Linux keep the Web Speech API behind `--enable-speech-dispatcher`, which is
+off by default**, so speech-dispatcher can be installed, running and answering
+with fourteen thousand voices while the browser reports none. Measured on
+Chromium 151: no flag, 0 voices; flag, 14,805.
+
+A page cannot install a package, write to `~/.config`, or restart a browser —
+that is the sandbox, and a page that could would be a page every other site
+could. So the fixing lives in a script:
+
+```
+scripts/whooptimer-doctor --check    # report only, change nothing
+scripts/whooptimer-doctor            # install and configure what is missing
+```
+
+It handles speech-dispatcher and a voice, the browser launch flag (the flags
+file on Arch, a user `.desktop` override elsewhere), BlueZ, and a soft-blocked
+adapter. It is idempotent, backs up anything it edits, and prints each command
+before running it. Quit the browser completely afterwards — launch flags are
+read once, at startup.
+
 ## Gate sensitivity
 
 The timer reports a lap when a receiver's RSSI rises **above its threshold**.

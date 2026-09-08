@@ -7,12 +7,13 @@
  */
 'use strict';
 
-const VERSION = 'wt-2';
+const VERSION = 'wt-3';
 const SHELL = [
   './', 'index.html', 'app.css', 'manifest.webmanifest', 'icon.svg',
   'icon-192.png', 'icon-512.png', 'icon-maskable.png',
   'js/boot.js', 'js/app.js', 'js/screens.js', 'js/ui.js', 'js/link.js',
   'js/laprf.js', 'js/race.js', 'js/tuning.js', 'js/store.js', 'js/speech.js',
+  'js/setup.js',
 ];
 
 self.addEventListener('install', e => {

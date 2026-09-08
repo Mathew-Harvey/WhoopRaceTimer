@@ -15,6 +15,7 @@ import * as tuning from './tuning.js';
 import { Race } from './race.js';
 import { BleLink, SerialLink, BridgeLink, DemoLink, capabilities, probeBridge } from './link.js';
 import { Voice, Wake } from './speech.js';
+import { checkSetup } from './setup.js';
 import { toast, mount, closeSheet, sheetOpen, confirmSheet } from './ui.js';
 import { SCREENS } from './screens.js';
 
@@ -61,7 +62,9 @@ class App {
     /* slot -> {sig, count}: what was last written there and how many times in a
      * row the same thing has been written without the timer agreeing. */
     this._writeTries = {};
-    this._linkLog = [];             // last 500 link lines, for WT.log()
+    this._linkLog = [];             // last 500 link lines, for wt.linkLog()
+    this.setup = null;              // what this machine still needs; see setup.js
+    this.setupDismissed = store.load('setupDismissed', {});
 
     /* No onChange hook: every screen re-reads race state each animation frame in
      * its own update(), so a lap never needs to rebuild the DOM. Structural
@@ -142,6 +145,11 @@ class App {
      * the pilot taps a connect button before this finishes, theirs wins: a
      * second link to the same timer would double every reading. */
     probeBridge().then(b => { if (b?.available) { this.bridge = b; this.markStructural(); } });
+    /* What this machine is missing, worked out once on load and never again:
+     * the answers only change when someone installs something, and that means
+     * a reload. Nothing is written or installed from here — see setup.js. */
+    checkSetup(this).then(r => { this.setup = r; this.markStructural(); })
+                    .catch(e => console.warn('[setup] check failed', e));
     this._autoConnect = true;
     for (const kind of ['bluetooth', 'usb']) {
       if (!this._autoConnect) break;
@@ -315,6 +323,19 @@ class App {
     if (!this.mode) this.screen = 'choose';
     else this.screen = this.mode === 'solo' ? 'fly' : 'race';
     this.render();
+  }
+
+  /** Problems worth putting in front of someone: found, and not already waved
+   *  away on this machine. A dismissal is per problem, so fixing the voice does
+   *  not re-raise a Bluetooth warning that was deliberately ignored. */
+  get setupProblems() {
+    return (this.setup?.problems || []).filter(p => !this.setupDismissed[p.id]);
+  }
+
+  dismissSetup(id) {
+    this.setupDismissed[id] = true;
+    store.save('setupDismissed', this.setupDismissed);
+    this.markStructural();
   }
 
   /** The last 500 link lines, one per row. `copy(wt.linkLog())` in the console. */

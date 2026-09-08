@@ -12,6 +12,7 @@ import * as tuning from './tuning.js';
 import { fmtDuration } from './race.js';
 import { ChannelScanner } from './tuning.js';
 import { h, mount, clear, icon, toast, sheet, confirmSheet, clockStr, fmt2, plural } from './ui.js';
+import { DOCTOR_URL } from './setup.js';
 
 export const SCREENS = {};
 const SLOTS = [1, 2, 3, 4];
@@ -208,9 +209,12 @@ SCREENS.connect = app => {
         h('button.ghost', { onclick: () => app.connect('bluetooth', { showAll: true }) },
           'Show all Bluetooth devices'))));
   }
-  if (!c.bluetooth && !bridgeReady) {
-    notes.appendChild(h('div.note', { 'data-tone': 'warn' },
-      h('strong', 'This browser can’t reach Bluetooth'), c.advice));
+  /* The setup check owns "this browser cannot reach Bluetooth" now — it says
+   * the same thing and carries the commands that fix it. A local bridge makes
+   * that moot, though: the timer is reachable without the browser's radio. */
+  for (const p of app.setupProblems) {
+    if (p.id === 'no-web-bluetooth' && bridgeReady) continue;
+    notes.appendChild(setupNote(app, p));
   }
   if (c.bluetooth && !c.offlineCapable) {
     notes.appendChild(h('div.note',
@@ -227,6 +231,44 @@ SCREENS.connect = app => {
                               target: '_blank', rel: 'noopener' }, 'Get the local app')));
   return { node };
 };
+
+/**
+ * One thing this machine is missing, and the exact command that fixes it.
+ *
+ * The commands are shown, not run: a page cannot install a package or edit a
+ * config file, and the useful thing it can do instead is remove every step of
+ * guesswork before the one paste that a person does have to make.
+ */
+function setupNote(app, p) {
+  const note = h('div.note', { 'data-tone': 'warn' }, h('strong', p.title), p.body);
+  const text = (p.commands || []).join('\n');
+  if (text) note.appendChild(h('pre.cmd', text));
+  if (p.hint) note.appendChild(h('div.muted', p.hint));
+  note.appendChild(h('div.act',
+    text && h('button.ghost', { onclick: e => copyCommands(e.currentTarget, note, text) },
+              'Copy the commands'),
+    p.doctor && h('a.ghostlink', { href: DOCTOR_URL, target: '_blank', rel: 'noopener' },
+                  'Or run the setup script'),
+    h('button.ghost', { onclick: () => app.dismissSetup(p.id) }, 'Not now')));
+  return note;
+}
+
+async function copyCommands(btn, note, text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Copied';
+  } catch (err) {
+    /* The clipboard wants a secure origin and a permission, and "this page is
+     * not on a secure origin" is one of the problems this note reports. Select
+     * the block instead so the paste can still happen by hand. */
+    btn.textContent = 'Select it and copy';
+    const r = document.createRange();
+    r.selectNodeContents(note.querySelector('pre.cmd'));
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+  }
+  setTimeout(() => { btn.textContent = 'Copy the commands'; }, 2500);
+}
 
 function helpSheet(app) {
   sheet('Timer isn’t showing up', () => h('div.stack',

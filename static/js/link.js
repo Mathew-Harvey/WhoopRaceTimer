@@ -560,9 +560,13 @@ function browserId() {
   const iOS = /iPad|iPhone|iPod/.test(ua) ||
               (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const bluefy = /Bluefy|WebBLE/i.test(ua);
+  const android = /Android/.test(ua);
   return {
     iOS,
-    android: /Android/.test(ua),
+    android,
+    /* Desktop Linux specifically: Android is a Linux too, and none of the
+     * advice about BlueZ, speech-dispatcher or launch flags applies there. */
+    linux: /Linux|X11/.test(ua) && !android && !iOS,
     firefox: /Firefox\//.test(ua),
     safari: /^((?!chrome|android|crios|fxios).)*safari/i.test(ua) && !bluefy,
     chromium: /Chrome\/|Chromium\/|Edg\//.test(ua),
@@ -593,10 +597,11 @@ export function capabilities() {
   } else if (!bluetooth && b.safari) {
     advice = 'Safari has no Web Bluetooth. Use Chrome or Edge, or run WhoopTimer on ' +
              'this machine and let it hold the link.';
-  } else if (!bluetooth && b.chromium && /Linux/.test(navigator.userAgent) && !b.android) {
-    advice = 'Chrome on Linux only offers Bluetooth to web pages when the system BlueZ stack is ' +
-             'available, and on some builds only behind chrome://flags/#enable-experimental-web-platform-features. ' +
-             'Try that, or run WhoopTimer on this machine and let it hold the link.';
+  } else if (!bluetooth && b.chromium && b.linux) {
+    advice = 'Chrome and Chromium on Linux offer Bluetooth to web pages only when BlueZ is ' +
+             'running and the WebBluetooth feature is switched on at launch — measured on ' +
+             'Chromium 151, it is off by default. Add it, or run WhoopTimer on this machine ' +
+             'and let it hold the link.';
   } else if (!bluetooth) {
     advice = 'This browser has no Web Bluetooth. Chrome and Edge do, on desktop and ' +
              'on Android.';

@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# Make this machine able to run WhoopTimer properly.
+#
+# The web page can tell you what is missing but cannot fix it: installing a
+# package, editing a config file and restarting a browser are all on the other
+# side of the browser sandbox. This is the other half. It is idempotent — run it
+# as often as you like — and it prints what it is about to do before doing it.
+#
+#   whooptimer-doctor          check, then fix what is broken
+#   whooptimer-doctor --check  report only, change nothing
+#
+# What it looks at:
+#   speech   speech-dispatcher + a voice, and the Chrome/Chromium launch flag
+#            that Linux browsers hide the Web Speech API behind
+#   radio    BlueZ running and the adapter not soft-blocked
+set -uo pipefail
+
+CHECK_ONLY=0
+[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+[ "${1:-}" = "-n" ] && CHECK_ONLY=1
+
+bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; }
+info() { printf '    %s\n' "$*"; }
+run()  {
+  if [ "$CHECK_ONLY" = 1 ]; then info "would run: $*"; return 0; fi
+  info "running: $*"
+  "$@"
+}
+
+CHANGED=0
+FAILED=0
+RESTART_BROWSER=0
+
+# ---------------------------------------------------------------- packages ---
+# Returns the install command for this distribution, or nothing if unknown.
+pkg_install_cmd() {
+  if   command -v pacman  >/dev/null 2>&1; then echo "sudo pacman -S --needed --noconfirm"
+  elif command -v apt-get >/dev/null 2>&1; then echo "sudo apt-get install -y"
+  elif command -v dnf     >/dev/null 2>&1; then echo "sudo dnf install -y"
+  elif command -v zypper  >/dev/null 2>&1; then echo "sudo zypper install -y"
+  fi
+}
+
+bold "Speech"
+NEED_PKGS=()
+command -v spd-say >/dev/null 2>&1 || NEED_PKGS+=("speech-dispatcher")
+if ! command -v espeak-ng >/dev/null 2>&1 && ! command -v espeak >/dev/null 2>&1; then
+  NEED_PKGS+=("espeak-ng")        # the same spelling in every repository worth naming
+fi
+
+if [ ${#NEED_PKGS[@]} -gt 0 ]; then
+  bad "missing: ${NEED_PKGS[*]}"
+  CMD="$(pkg_install_cmd)"
+  if [ -z "$CMD" ]; then
+    info "unknown package manager — install these by hand: ${NEED_PKGS[*]}"
+    FAILED=1
+  else
+    # shellcheck disable=SC2086
+    if run $CMD "${NEED_PKGS[@]}"; then CHANGED=1; else FAILED=1; fi
+  fi
+else
+  ok "speech-dispatcher and a voice are installed"
+fi
+
+# Does the daemon actually produce voices? Installed is not the same as working.
+if command -v spd-say >/dev/null 2>&1; then
+  if timeout 15 spd-say -L >/dev/null 2>&1; then
+    NVOICES=$(timeout 15 spd-say -L 2>/dev/null | tail -n +2 | grep -c . || echo 0)
+    ok "speech-dispatcher answers with $NVOICES voices"
+  else
+    bad "speech-dispatcher is installed but not answering"
+    info "try: systemctl --user restart speech-dispatcherd 2>/dev/null || spd-say hello"
+    FAILED=1
+  fi
+fi
+
+# ------------------------------------------------------------ browser flag ---
+# Chrome and Chromium on Linux keep the Web Speech API behind a launch flag that
+# is off by default. Without it a browser reports zero voices no matter how well
+# speech-dispatcher is working — which is the whole trap: every diagnostic at
+# the OS level passes, and the page is still silent.
+FLAG="--enable-speech-dispatcher"
+
+# Arch and its derivatives patch Chromium to read a flags file. Elsewhere the
+# flag has to ride on the launcher, so we override the .desktop entry in the
+# user's own directory rather than touching anything the package manager owns.
+flags_file_for() {                     # $1: chromium | chrome
+  case "$1" in
+    chromium) echo "${XDG_CONFIG_HOME:-$HOME/.config}/chromium-flags.conf" ;;
+    chrome)   echo "${XDG_CONFIG_HOME:-$HOME/.config}/chrome-flags.conf" ;;
+  esac
+}
+
+add_flag_via_file() {                  # $1: path
+  local f="$1"
+  if [ -f "$f" ] && grep -qs -- "$FLAG" "$f"; then
+    ok "$(basename "$f") already has $FLAG"
+    return 0
+  fi
+  if [ "$CHECK_ONLY" = 1 ]; then
+    bad "$(basename "$f") is missing $FLAG"
+    info "would append it"
+    return 0
+  fi
+  [ -f "$f" ] && cp "$f" "$f.bak.$(date +%s)"
+  mkdir -p "$(dirname "$f")"
+  # Keep the file newline-terminated: appending to a file whose last line has no
+  # newline would silently glue the flag onto the end of the previous one.
+  [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ] && printf '\n' >> "$f"
+  printf '%s\n' "$FLAG" >> "$f"
+  ok "added $FLAG to $f"
+  CHANGED=1
+  RESTART_BROWSER=1
+}
+
+add_flag_via_desktop() {               # $1: binary  $2: desktop id
+  local bin="$1" id="$2"
+  local src dst="${XDG_DATA_HOME:-$HOME/.local/share}/applications/$id.desktop"
+  src=$(ls "/usr/share/applications/$id.desktop" 2>/dev/null | head -1)
+  if [ -z "$src" ]; then
+    info "no $id.desktop to override — launch it yourself as: $bin $FLAG"
+    return 0
+  fi
+  if [ -f "$dst" ] && grep -qs -- "$FLAG" "$dst"; then
+    ok "$id.desktop override already has $FLAG"
+    return 0
+  fi
+  if [ "$CHECK_ONLY" = 1 ]; then
+    bad "$id has no $FLAG in its launcher"
+    info "would write an override to $dst"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  # Append the flag to every Exec= line, before the %U/%F field code so the
+  # launcher still passes URLs through. The first capture has to end on a
+  # non-space, non-field-code character: matching to the end of "[^%]*" instead
+  # glues the flag straight onto the binary name on any Exec line that carries
+  # no field code, which is most of the extra desktop actions.
+  sed -E "s|^(Exec=[^%]*[^%[:space:]])[[:space:]]*(%[UuFf])?[[:space:]]*$|\1 $FLAG \2|; s|[[:space:]]+$||" \
+      "$src" > "$dst"
+  ok "wrote $dst with $FLAG"
+  info "launching '$bin' from a terminal still needs the flag typed in"
+  CHANGED=1
+  RESTART_BROWSER=1
+}
+
+FOUND_BROWSER=0
+for pair in "chromium:chromium" "google-chrome-stable:google-chrome" "google-chrome:google-chrome"; do
+  bin="${pair%%:*}"; id="${pair##*:}"
+  command -v "$bin" >/dev/null 2>&1 || continue
+  FOUND_BROWSER=1
+  if command -v pacman >/dev/null 2>&1; then
+    case "$bin" in
+      chromium) add_flag_via_file "$(flags_file_for chromium)" ;;
+      *)        add_flag_via_file "$(flags_file_for chrome)" ;;
+    esac
+  else
+    add_flag_via_desktop "$bin" "$id"
+  fi
+done
+[ "$FOUND_BROWSER" = 0 ] && info "no Chrome or Chromium found; Firefox needs no flag but has no Web Bluetooth either"
+
+# ------------------------------------------------------------------- radio ---
+bold "Bluetooth"
+if ! command -v bluetoothctl >/dev/null 2>&1 && ! [ -d /sys/class/bluetooth ]; then
+  bad "no BlueZ on this machine — Web Bluetooth has nothing to talk to"
+  CMD="$(pkg_install_cmd)"
+  [ -n "$CMD" ] && run $CMD bluez bluez-utils && CHANGED=1
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  if systemctl is-active --quiet bluetooth 2>/dev/null; then
+    ok "the bluetooth service is running"
+  else
+    bad "the bluetooth service is not running"
+    if run sudo systemctl enable --now bluetooth; then CHANGED=1; else FAILED=1; fi
+  fi
+fi
+
+if command -v rfkill >/dev/null 2>&1; then
+  if rfkill list bluetooth 2>/dev/null | grep -qi "soft blocked: yes"; then
+    bad "the adapter is soft-blocked"
+    if run rfkill unblock bluetooth; then CHANGED=1; else FAILED=1; fi
+  else
+    ok "the adapter is not blocked"
+  fi
+fi
+
+if command -v bluetoothctl >/dev/null 2>&1; then
+  if bluetoothctl show 2>/dev/null | grep -q "Powered: yes"; then
+    ok "an adapter is present and powered"
+  else
+    bad "no powered adapter — check the hardware switch, or run: bluetoothctl power on"
+  fi
+fi
+
+# ----------------------------------------------------------------- summary ---
+echo
+if [ "$CHECK_ONLY" = 1 ]; then
+  bold "Check only — nothing was changed. Run without --check to fix."
+elif [ "$CHANGED" = 1 ]; then
+  bold "Done."
+  [ "$RESTART_BROWSER" = 1 ] && \
+    echo "  Quit Chrome/Chromium completely and reopen it — launch flags are read once, at startup."
+else
+  bold "Nothing needed changing."
+fi
+[ "$FAILED" = 1 ] && echo "  Some steps failed; the lines marked ✗ above say which." && exit 1
+exit 0

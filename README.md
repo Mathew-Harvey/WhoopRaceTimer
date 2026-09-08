@@ -128,6 +128,15 @@ control pt   6e400002-b5a3-f393-e0a9-e50e24dcca9e   (write without response, 20-
 stream       6e400003-b5a3-f393-e0a9-e50e24dcca9e   (notify)
 ```
 
+On connect the app asks the timer to describe slots 1-4 and nothing else: four
+read-only records, one slot each, 300 ms after the link comes up. It writes
+nothing until something in the app actually differs from what the timer
+reported, and it will write the same setup to a slot at most three times before
+giving up and saying so — a timer that will not take a value used to be asked
+again forever, which re-tunes every receiver several times a second for as long
+as the link is up. Every outbound frame is logged to the browser console as
+`[link] tx <hex>`; if a unit misbehaves, the last line before it is the answer.
+
 **The timer only advertises for a window after power-on.** Not after a
 disconnect, and the bind button does not trigger it. If the link drops, power
 cycle the timer — it reconnects in about a second. This is the answer to almost

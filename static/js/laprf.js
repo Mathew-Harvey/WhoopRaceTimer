@@ -138,7 +138,7 @@ export function unescape(rec) {
 }
 
 /* ---- encoding ---- */
-const SIZES = { u8: 1, u16: 2, u32: 4, f32: 4 };
+const SIZES = { u8: 1, u16: 2, u32: 4, u64: 8, f32: 4 };
 
 /** fields: array of [signature, type, value] */
 export function encode(recordType, fields) {
@@ -154,6 +154,12 @@ export function encode(recordType, fields) {
     if (typ === 'u8') dv.setUint8(p + 2, val & 0xff);
     else if (typ === 'u16') dv.setUint16(p + 2, val & 0xffff, true);
     else if (typ === 'u32') dv.setUint32(p + 2, val >>> 0, true);
+    else if (typ === 'u64') {
+      /* Two u32s rather than setBigUint64: older WebKit has no BigInt64 views,
+       * and the decoder deliberately reads u64 as a Number for the same reason. */
+      dv.setUint32(p + 2, val >>> 0, true);
+      dv.setUint32(p + 6, Math.floor(val / 4294967296) >>> 0, true);
+    }
     else dv.setFloat32(p + 2, val, true);
     p += 2 + SIZES[typ];
   }
@@ -163,8 +169,14 @@ export function encode(recordType, fields) {
   return escape(rec);
 }
 
+/* Both time fields are 8 bytes wide — FIELD_TYPES below says so, and so does
+ * the unit when it answers. A request that declares them 4 bytes wide asks a
+ * firmware that reads by field type to take eight bytes out of a four-byte
+ * field and then carry on walking the record from the wrong offset. Nothing in
+ * this app reads the answer, so nothing sends this any more; it stays correct
+ * for anyone who does. */
 export const getRtcTime = () =>
-  encode(RT_TIME, [[TF_RTC_TIME, 'u32', 0], [TF_TIME_RTC_TIME, 'u32', 0]]);
+  encode(RT_TIME, [[TF_RTC_TIME, 'u64', 0], [TF_TIME_RTC_TIME, 'u64', 0]]);
 
 export const getRfSetup = (slot) => {
   const slots = slot ? [slot] : [1, 2, 3, 4, 5, 6, 7, 8];

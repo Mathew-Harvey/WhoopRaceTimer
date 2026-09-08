@@ -20,6 +20,10 @@ import { SCREENS } from './screens.js';
 
 export const SLOTS = [1, 2, 3, 4];
 
+/* How many times the same setup is written to one slot before the app accepts
+ * that the timer is not going to take it. See flushConfig(). */
+const MAX_WRITE_TRIES = 3;
+
 class App {
   constructor() {
     this.caps = capabilities();
@@ -54,6 +58,10 @@ class App {
     this.sessionBest = null;
     this._writeTimer = null;
     this._dirty = new Set();
+    /* slot -> {sig, count}: what was last written there and how many times in a
+     * row the same thing has been written without the timer agreeing. */
+    this._writeTries = {};
+    this._linkLog = [];             // last 500 link lines, for WT.log()
 
     /* No onChange hook: every screen re-reads race state each animation frame in
      * its own update(), so a lap never needs to rebuild the DOM. Structural
@@ -267,7 +275,17 @@ class App {
     link.on('record', rec => this.onRecord(rec));
     link.on('state', () => this.markStructural());
     link.on('lost', () => this.onLinkLost());
-    link.on('log', msg => console.debug('[link]', msg));
+    /* console.log, not console.debug: Chrome's DevTools hides debug messages
+     * unless the level filter is set to Verbose, so the one record of what the
+     * app said to the timer was invisible exactly when it was needed. Also kept
+     * in a ring buffer — `copy(wt.linkLog())` hands over the lot at a track,
+     * where scrolling a console on a phone is not a thing anyone will do. */
+    link.on('log', msg => {
+      const line = new Date().toISOString().slice(11, 23) + ' ' + msg;
+      this._linkLog.push(line);
+      if (this._linkLog.length > 500) this._linkLog.shift();
+      console.log('[link]', msg);
+    });
     return link;
   }
 
@@ -289,6 +307,7 @@ class App {
      * particular the demo's 1600 must never be mistaken for a real unit's
      * threshold. */
     this.timer = { battery: null, lastRx: 0, rfSetup: {} };
+    this._writeTries = {};
     /* Nothing is written to the timer just because we connected. The link's
      * hello() asks it to describe itself; adoptRfSetup() then corrects only the
      * slots where our saved intent actually differs. Writing on connect is how
@@ -297,6 +316,9 @@ class App {
     else this.screen = this.mode === 'solo' ? 'fly' : 'race';
     this.render();
   }
+
+  /** The last 500 link lines, one per row. `copy(wt.linkLog())` in the console. */
+  linkLog() { return this._linkLog.join('\n'); }
 
   onLinkLost() {
     toast(this.linkKind === 'bluetooth'
@@ -388,11 +410,13 @@ class App {
       }
       /* Enabled is still ours to decide (solo practice switches the others off). */
       if (!!rec.enabled !== wantEnabled) this.pushConfig([slot]);
+      else delete this._writeTries[slot];
       return;
     }
     /* The user chose this slot's channel here: that wins — but only now that
      * the timer has said what it holds, and only if it actually differs. */
     if (mine !== rec.frequency || !!rec.enabled !== wantEnabled) this.pushConfig([slot]);
+    else delete this._writeTries[slot];        // it took: the next change starts fresh
   }
 
   /* ------------------------------------------------------ outbound config -- */
@@ -411,7 +435,7 @@ class App {
   flushConfig() {
     if (!this.canControl || !this._dirty.size) return;
     if (this.race.state === 'running' || this.race.state === 'staging') return;
-    const written = [];
+    const sent = [], settled = [];
     for (const slot of this._dirty) {
       const p = this.race.pilots.get(slot);
       if (!p) continue;
@@ -426,17 +450,38 @@ class App {
       else continue;
       /* Likewise thresholds and gain: what was measured or set here, else what
        * the timer holds, and only as a last resort a constant. */
-      this.link.send(laprf.setRfSetup({
+      const want = {
         slot, band: rf.band, channel: rf.channel, frequency: rf.frequency,
         threshold: Number(cfg.threshold ?? hw.threshold ?? 1600),
         gain: Number(cfg.gain ?? hw.gain ?? 58),
-        enabled: !!p.enabled }));
-      written.push(slot);
+        enabled: !!p.enabled };
+      /* A write is followed by a read-back, and a read-back that still differs
+       * marks the slot dirty again. That is a loop with no exit if the timer
+       * will not take the value — a slot it does not have, an enable it
+       * ignores — and the loop is not idle: it re-tunes every receiver a few
+       * times a second, for as long as the link is up. Ask three times, then
+       * leave the hardware alone and say so once. */
+      const tries = this._writeTries[slot];
+      const sig = JSON.stringify(want);
+      const count = tries && tries.sig === sig ? tries.count : 0;
+      if (count >= MAX_WRITE_TRIES) {
+        if (!tries.warned) {
+          tries.warned = true;
+          console.warn('[timer] slot ' + slot + ' will not take this setup; leaving it alone', want);
+          toast(`The timer would not accept the setup for slot ${slot} — it is still on ` +
+                `${timerChannelName(hw) || 'its own channel'}.`, 'err', 8000);
+        }
+        settled.push(slot);
+        continue;
+      }
+      this._writeTries[slot] = { sig, count: count + 1, warned: false };
+      this.link.send(laprf.setRfSetup(want));
+      sent.push(slot);
     }
-    for (const slot of written) this._dirty.delete(slot);
-    if (!written.length) return;
+    for (const slot of sent.concat(settled)) this._dirty.delete(slot);
+    if (!sent.length) return;
     this.link.send(laprf.setMinLapTime(Number(this.settings.timerMinLapMs) || 0));
-    this.link.send(laprf.getRfSetup());
+    for (const slot of sent) this.link.send(laprf.getRfSetup(slot));
   }
 
   /* ------------------------------------------------------------- persistence -- */

@@ -25,6 +25,15 @@ export const NUS_STREAM  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
  * working Python transport and are not worth tuning down. */
 const CHUNK = 20, CHUNK_GAP_MS = 30, MSG_GAP_MS = 60;
 
+/* The slots this app races. Four, everywhere — see SLOTS in app.js. A query for
+ * slots 5-8 asks a four-receiver unit about receivers it does not have. */
+const QUERY_SLOTS = [1, 2, 3, 4];
+
+/* A LapRF has just finished bringing up a link when the app first has something
+ * to say. Let it finish. The first frame after a connect is the riskiest one a
+ * client sends, and there is nothing here worth saying into that. */
+const HELLO_DELAY_MS = 300;
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* ---------------------------------------------------------------- base --- */
@@ -48,11 +57,17 @@ export class LapRFLink {
     for (const fn of this._handlers[evt] || []) { try { fn(arg); } catch (e) { console.error(e); } }
   }
 
-  /** Retire this link: nothing it hears from now on reaches the app. A replaced
-   *  link keeps receiving notifications for as long as the browser holds the
-   *  underlying device, and two links reporting the same timer means every
-   *  reading arrives twice and a dropped old link toasts about a working new one. */
-  detach() { this._dead = true; this._handlers = {}; }
+  /** Retire this link: nothing it hears from now on reaches the app, and
+   *  nothing it still had to say reaches the timer.
+   *
+   *  A replaced link keeps receiving notifications for as long as the browser
+   *  holds the underlying device, and two links reporting the same timer means
+   *  every reading arrives twice and a dropped old link toasts about a working
+   *  new one. Silencing the events is only half of it: the queue is also live,
+   *  and Chrome hands both links the same GATT characteristic, so a retired
+   *  link's pending frames interleave 20 bytes at a time with the new link's
+   *  and the timer is fed two records spliced together. */
+  detach() { this._dead = true; this._handlers = {}; this._txq.length = 0; }
   log(msg) { this.emit('log', msg); }
 
   /** True once config writes will actually reach the timer. */
@@ -76,8 +91,11 @@ export class LapRFLink {
   async _drain() {
     this._txRunning = true;
     try {
-      while (this._txq.length && this.connected) {
+      while (this._txq.length && this.connected && !this._dead) {
         const msg = this._txq.shift();
+        /* Every outbound frame, in the console. When a timer misbehaves the
+         * only question that matters is what it was told immediately before. */
+        this.log('tx ' + [...msg].map(b => b.toString(16).padStart(2, '0')).join(''));
         try { await this._write(msg); }
         catch (e) { this.log('write failed: ' + e.message); }
         await sleep(MSG_GAP_MS);
@@ -109,10 +127,16 @@ export class LapRFLink {
     if (proven && this.mode !== 'binary') this.setState({ mode: 'binary' });
   }
 
-  /** Say hello: ask the timer to describe every slot and its clock. */
+  /**
+   * Say hello: ask the timer to describe the slots this app will race.
+   *
+   * Read-only, one slot per record, and nothing whose answer is thrown away.
+   * The RTC clock used to be asked for here; no screen ever read the reply, and
+   * the request declared two eight-byte fields as four — see getRtcTime(). A
+   * connect handshake should be the most boring thing the app ever sends.
+   */
   hello() {
-    this.send(laprf.getRfSetup());
-    this.send(laprf.getRtcTime());
+    for (const slot of QUERY_SLOTS) this.send(laprf.getRfSetup(slot));
   }
 }
 
@@ -194,6 +218,7 @@ export class BleLink extends LapRFLink {
     this._buf = new Uint8Array(0);
     this.setState({ connected: true, mode: 'binary', detail: this.deviceName });
     this.log('connected');
+    await sleep(HELLO_DELAY_MS);
     this.hello();
     return true;
   }
@@ -294,6 +319,7 @@ export class SerialLink extends LapRFLink {
     this.setState({ connected: true, mode: 'ascii', detail: 'USB serial' });
     this.log('USB port open');
     this._readLoop();
+    await sleep(HELLO_DELAY_MS);
     this.hello();       // harmless if the unit is in ASCII mode
     return true;
   }

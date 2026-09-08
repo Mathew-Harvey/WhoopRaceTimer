@@ -102,7 +102,7 @@ def unescape(rec):
     return bytes(out)
 
 # ---- encoding ----
-_FMT = {"u8": "<B", "u16": "<H", "u32": "<I", "f32": "<f"}
+_FMT = {"u8": "<B", "u16": "<H", "u32": "<I", "u64": "<Q", "f32": "<f"}
 
 def encode(record_type, fields):
     """fields: list of (signature, type_str, value)"""
@@ -116,7 +116,8 @@ def encode(record_type, fields):
     return escape(bytes(rec))
 
 def get_rtc_time():
-    return encode(RT_TIME, [(TF_RTC_TIME, "u32", 0), (TF_TIME_RTC_TIME, "u32", 0)])
+    # Both time fields are 8 bytes wide; see the note in the JS twin.
+    return encode(RT_TIME, [(TF_RTC_TIME, "u64", 0), (TF_TIME_RTC_TIME, "u64", 0)])
 
 def get_rf_setup(slot=None):
     slots = [slot] if slot else range(1, 9)

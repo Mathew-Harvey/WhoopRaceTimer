@@ -528,6 +528,16 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 .ov .stagetip{color:var(--fg-2);font-size:var(--t-20);text-align:center;margin-top:var(--s4)}
 .ov .cancel{margin-top:var(--s5);min-height:52px;padding:0 28px;font-size:var(--t-17)}
 
+/* The gate flash. A border of light around the whole screen rather than a wash
+   over it: a phone propped by the gate has to show a crossing from the far side
+   of a room, while the lap time that just landed stays readable underneath. */
+#passflash{position:fixed;inset:0;z-index:75;pointer-events:none;
+  box-shadow:inset 0 0 0 10px var(--flash, var(--state-green)),
+             inset 0 0 90px 10px var(--flash, var(--state-green));
+  opacity:0;transition:opacity 90ms linear}
+#passflash[data-on]{opacity:.85;transition:none}
+@media (prefers-reduced-motion:reduce){#passflash{transition:none}}
+
 .sheet{position:fixed;inset:0;z-index:70;display:flex;align-items:flex-end;justify-content:center;
   background:rgb(3 5 8 / .72);padding:0}
 .sheet .panel{width:100%;max-width:620px;background:var(--surface-1);

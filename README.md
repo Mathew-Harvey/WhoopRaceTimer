@@ -248,6 +248,24 @@ screen: quiet, then one flown pass, then a trigger between them. It is
 occasionally the right tool — a track where nobody wants to fly a lap to find
 out — but it is no longer the way in.
 
+### Seeing and hearing the gate
+
+**The puck's own lights and beeper cannot be driven.** The LapRF protocol has
+records for signal, setup, settings, passings, status, time and gate state, and
+nothing at all for its LEDs or its buzzer — those are firmware behaviour. What
+can be lit is the phone, which is the thing being watched anyway: every crossing
+flashes a band of light around the whole screen in that pilot's colour, bright
+enough to read from the far side of a room and short enough not to sit over the
+next lap. It is a border rather than a wash so the lap time that just landed
+stays readable underneath.
+
+What the puck's lights *are* showing is its gate state, which arrives in every
+status record and which this app ignored for a long time. The protocol names
+four — idle, active, crashed, and a shutdown value — and a LapRF really does
+report itself crashed, at which point it has stopped timing and will go on
+saying nothing for as long as anyone watches. That now says so out loud, because
+silence is the one thing a timing app must never present as normal.
+
 ### Hearing the gate
 
 Turn on **Beep on every crossing** under Voice and the app sounds a short tone

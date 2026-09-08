@@ -34,6 +34,8 @@ const AUTO_TUNE_GAP_MS = 15000, AUTO_TUNE_MIN_PASSES = 3;
  * quad seen twice — see rejectBleed(). */
 const BLEED_WINDOW_S = 0.6, BLEED_RATIO = 1.25;
 
+
+
 class App {
   constructor() {
     this.caps = capabilities();
@@ -438,6 +440,7 @@ class App {
            * the beep is that it lands with the quad, and it is the one thing
            * here that a person is timing by ear. */
           this.beeper.ping(rec.slot);
+          this.flashGate(rec.slot);
           /* The timer measured this pass's peak in its own firmware, which is
            * better than anything sampled here. Keep it as evidence about the
            * trigger — it is the only fully trustworthy peak we ever see. */
@@ -449,6 +452,7 @@ class App {
         }
         break;
       case 'status':
+        if (rec.gateState !== undefined) this.onGateState(rec.gateState);
         if (rec.batteryVoltage) {
           this.timer.battery = rec.batteryVoltage > 100 ? rec.batteryVoltage / 1000 : rec.batteryVoltage;
         }
@@ -461,6 +465,30 @@ class App {
         if (rec.slot) this.adoptRfSetup(rec);
         break;
     }
+  }
+
+  /**
+   * The timer's own opinion of itself, which is what its lights are showing.
+   *
+   * Every status record carries this and nothing has ever read it. The protocol
+   * names four states — idle, active, crashed, and a shutdown value — and
+   * "crashed" is a real thing a LapRF reports about itself, at which point it
+   * has stopped timing and will keep saying nothing for as long as anyone
+   * watches. Silence is the one thing this app must never present as normal.
+   */
+  onGateState(state) {
+    if (state === this.timer.gateState) return;
+    const was = this.timer.gateState;
+    this.timer.gateState = state;
+    if (was === undefined) return;              // first report is not a change
+    this.logLine('gate state -> ' + laprf.gateStateName(state));
+    if (state === laprf.GATE.crashed) {
+      toast('The timer reports it has crashed — power-cycle it. It is not timing.', 'err', 12000);
+      this.voice.say('The timer has stopped. Power cycle it.', { priority: true });
+    } else if (state === laprf.GATE.idle) {
+      toast('The timer went idle — it is not looking for crossings.', 'err', 8000);
+    }
+    this.markStructural();
   }
 
   ingestSlots(slots, mean = false) {
@@ -515,6 +543,31 @@ class App {
       : rep.verdict === 'no trigger' ? 'it had no level at all'
       : 'passes were being missed'}`, 'ok', 6000);
     this.markStructural();
+  }
+
+  /**
+   * Light the screen at the moment the timer says a quad crossed.
+   *
+   * The puck's own LEDs cannot be driven: the LapRF protocol has records for
+   * signal, setup, settings, passings, status, time and gate state, and nothing
+   * whatsoever for its lights or its beeper. Those are firmware behaviour. What
+   * can be lit is the phone, and a phone propped by the gate is more use for
+   * this anyway — it is the thing being watched, and it can show which receiver
+   * fired by using that pilot's own colour.
+   *
+   * Green is the default because green is what "counted" means everywhere else
+   * in this app, and this is the same statement made loudly.
+   */
+  flashGate(slot) {
+    const el = this._flashEl ||= document.getElementById('passflash');
+    if (!el) return;
+    el.style.setProperty('--flash', slot ? `var(--id-${((slot - 1) % 4) + 1})` : 'var(--state-green)');
+    el.hidden = false;
+    el.dataset.on = '';
+    clearTimeout(this._flashTimer);
+    /* Long enough to register from across a room, short enough not to sit over
+     * the next crossing on a micro track where laps are five seconds. */
+    this._flashTimer = setTimeout(() => { delete el.dataset.on; }, 140);
   }
 
   /**

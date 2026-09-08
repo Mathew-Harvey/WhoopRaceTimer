@@ -193,7 +193,16 @@ export const setRfSetup = ({ slot, band, channel, frequency,
 
 export const setMinLapTime = ms => encode(RT_SETTINGS, [[SET_MIN_LAP, 'u32', ms]]);
 export const setStatusInterval = ms => encode(RT_SETTINGS, [[SET_STATUS_INTERVAL, 'u16', ms]]);
-export const setGateState = on => encode(RT_STATE_CONTROL, [[SC_GATE_STATE, 'u8', on ? 1 : 0]]);
+/* What a LapRF says about itself. Every status record carries one of these in
+ * its gateState field, and "crashed" is a state a unit really does report — at
+ * which point it has stopped timing and will go on saying nothing. */
+export const GATE = { idle: 0x00, active: 0x01, crashed: 0x02, shutdown: 0xfe };
+export const gateStateName = v =>
+  Object.keys(GATE).find(k => GATE[k] === v) || ('0x' + Number(v).toString(16));
+
+export const setGateState = on =>
+  encode(RT_STATE_CONTROL, [[SC_GATE_STATE, 'u8', typeof on === 'number' ? on
+                                                : on ? GATE.active : GATE.idle]]);
 
 /* ---- decoding ---- */
 const U8 = 'u8', U16 = 'u16', U32 = 'u32', U64 = 'u64', F32 = 'f32';

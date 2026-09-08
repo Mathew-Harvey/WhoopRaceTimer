@@ -45,6 +45,7 @@ export const DEFAULT_PREFS = {
   announce: 'full',      // full: "Lap 3, 24.7" | time: "24.7" | off
   theme: 'dark',
   keepAwake: true,
+  gateBeep: false,       // a tone the moment the timer reports a crossing
 };
 
 export function settings() { return { ...DEFAULT_SETTINGS, ...load('settings', {}) }; }

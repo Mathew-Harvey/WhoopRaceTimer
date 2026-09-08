@@ -267,6 +267,14 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 .passline .dot[data-tone=warn]{background:var(--state-amber)}
 .passline .dot[data-tone=bad]{background:var(--state-red)}
 .passline button{padding:5px 12px;min-height:32px;font-size:var(--t-13);font-weight:700}
+/* The per-receiver self-tuning switch. Pressed is a real state, not a hover:
+   it writes to the timer on its own and must read as switched on from across
+   a room. */
+.gateslot header .autotune{padding:5px 12px;min-height:32px;font-size:var(--t-13);
+  font-weight:700;border-radius:var(--r1);border:1px solid var(--line);
+  background:var(--surface-2);color:var(--fg-3)}
+.gateslot header .autotune[aria-pressed=true]{border-color:var(--state-green);
+  color:var(--fg);background:color-mix(in srgb,var(--state-green) 22%,var(--surface-2))}
 /* A command block someone is about to paste into a terminal. It must survive
    being read on a phone: monospace so a flag is unambiguous, scrolling in its
    own box rather than pushing the page sideways, and wrapping off so a long

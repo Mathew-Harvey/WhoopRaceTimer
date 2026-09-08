@@ -168,6 +168,32 @@ level that would have caught them. Fly, look, tap, fly again.
 This is not lap timing — the LapRF does that in its own firmware, far faster
 than status records arrive here. It only answers whether the level is right.
 
+Three things feed that answer. The sampled signal, which is the only thing that
+can see a pass that *missed*. The peak height the timer reports with every
+crossing it does count, measured in firmware and therefore the one fully
+trustworthy peak available. And the quiet level at the moment of each pass, so a
+gate tuned in an empty room is judged against the room it is actually flying in.
+
+A gate that counts every pass can still be wrong. A trigger tucked just under
+the weakest peak counts today and misses on the next flight, when the battery is
+lower or the quad takes the gate a foot wider — so a thin margin reads as
+**fragile** rather than good, with the number it cleared by.
+
+Switch **Auto** on for a receiver and it corrects its own trigger as you fly. It
+is deliberately timid: three passes of evidence before it moves, never during a
+race, never for a change too small to matter, at most once every fifteen
+seconds, and it says so every time it does.
+
+### Hearing the gate
+
+Turn on **Beep on every crossing** under Voice and the app sounds a short tone
+the instant the timer reports a pass — one pitch per receiver, so a four-up is
+still legible by ear. Stand at the gate and fly through it: if the beep lands
+with the quad rather than after it, the lap times are honest. It is an
+oscillator rather than the announcer on purpose, because speech is synthesised
+and queued, and a callout that arrives a beat late says nothing about when the
+pass happened.
+
 ## Setup check
 
 The page checks this machine on load and says nothing unless something is

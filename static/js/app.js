@@ -14,7 +14,7 @@ import * as store from './store.js';
 import * as tuning from './tuning.js';
 import { Race } from './race.js';
 import { BleLink, SerialLink, BridgeLink, DemoLink, capabilities, probeBridge } from './link.js';
-import { Voice, Wake } from './speech.js';
+import { Voice, Wake, Beeper } from './speech.js';
 import { checkSetup } from './setup.js';
 import { toast, mount, closeSheet, sheetOpen, confirmSheet } from './ui.js';
 import { SCREENS } from './screens.js';
@@ -25,12 +25,17 @@ export const SLOTS = [1, 2, 3, 4];
  * that the timer is not going to take it. See flushConfig(). */
 const MAX_WRITE_TRIES = 3;
 
+/* Self-tuning is allowed to move a slot at most this often, and only once it
+ * has this many passes to reason from. */
+const AUTO_TUNE_GAP_MS = 15000, AUTO_TUNE_MIN_PASSES = 3;
+
 class App {
   constructor() {
     this.caps = capabilities();
     this.settings = store.settings();
     this.prefs = store.prefs();
     this.voice = new Voice(this.prefs);
+    this.beeper = new Beeper(this.prefs);
     this.wake = new Wake();
 
     this.link = null;
@@ -374,7 +379,19 @@ class App {
     this.timer.lastRx = Date.now();
     switch (rec.type) {
       case 'passing':
-        if (rec.slot) this.race.onPassing(rec.slot, undefined, rec.rtcTime ?? null);
+        if (rec.slot) {
+          /* Sound it before anything else in this handler. The whole value of
+           * the beep is that it lands with the quad, and it is the one thing
+           * here that a person is timing by ear. */
+          this.beeper.ping(rec.slot);
+          /* The timer measured this pass's peak in its own firmware, which is
+           * better than anything sampled here. Keep it as evidence about the
+           * trigger — it is the only fully trustworthy peak we ever see. */
+          this.sig.get(rec.slot).recordHardwarePass(
+            rec.peakHeight ?? null, this.thresholdFor(rec.slot), this.rfFor(rec.slot).floor);
+          this.race.onPassing(rec.slot, undefined, rec.rtcTime ?? null);
+          this.autoTune(rec.slot);
+        }
         break;
       case 'status':
         if (rec.batteryVoltage) {
@@ -404,6 +421,37 @@ class App {
        * nobody having flown yet. */
       this.sig.get(slot).observe(this.thresholdFor(slot), this.rfFor(slot).floor);
     }
+  }
+
+  /**
+   * Keep a slot's trigger where the evidence says it belongs.
+   *
+   * Opt-in per slot and deliberately timid, because this writes to the timer on
+   * its own. It moves only on real evidence, only by an amount worth moving,
+   * never mid-race, and never more than once in a while — a gate that retunes
+   * itself every pass is worse than one that is slightly wrong, and the write
+   * path is the one that used to talk a timer to death.
+   */
+  autoTune(slot) {
+    const cfg = this.rfFor(slot);
+    if (!cfg.auto || !this.canControl) return;
+    if (this.race.state === 'running' || this.race.state === 'staging') return;
+    const now = Date.now();
+    const last = this._autoAt?.[slot] || 0;
+    if (now - last < AUTO_TUNE_GAP_MS) return;
+    const sig = this.sig.get(slot);
+    const threshold = this.thresholdFor(slot);
+    if (threshold == null) return;
+    const rep = tuning.passReport(sig.passes, threshold);
+    if (rep.seen < AUTO_TUNE_MIN_PASSES || !rep.worthIt) return;
+    if (rep.verdict === 'good') return;                 // nothing to fix
+    (this._autoAt ||= {})[slot] = now;
+    this.saveRf(slot, { threshold: rep.suggest });
+    this.pushConfig([slot], { now: true });
+    sig.clearPasses();          // the verdicts that follow must judge the new level
+    toast(`Slot ${slot} tuned itself to ${Math.round(rep.suggest)} — ${rep.verdict === 'fragile'
+      ? 'the margin was thin' : 'passes were being missed'}`, 'ok', 6000);
+    this.markStructural();
   }
 
   /** The trigger this slot is really on: what was chosen here, else what the

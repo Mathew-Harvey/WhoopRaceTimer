@@ -112,6 +112,59 @@ export class Voice {
   }
 }
 
+/**
+ * A short tone the instant the timer says a quad crossed the gate.
+ *
+ * The point is verification, not decoration: stand at the gate, fly through it,
+ * and if the beep lands with the quad rather than after it, the lap times can
+ * be trusted. That only works if the sound is immediate, which is why this is
+ * an oscillator and not the announcer — speech is synthesised and queued, and a
+ * callout that arrives a beat late says nothing about when the pass happened.
+ *
+ * One pitch per slot, a major chord across the four, so a four-up race is still
+ * legible by ear when two quads cross together.
+ */
+const SLOT_PITCH = [880, 1046.5, 1318.5, 1568];      // A5 C6 E6 G6
+
+export class Beeper {
+  constructor(prefs) {
+    this.prefs = prefs;
+    this.ctx = null;
+  }
+
+  /** Browsers refuse audio before a gesture; the first tap builds the context.
+   *  Cheap and idempotent, so it can hang off anything the pilot touches. */
+  arm() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try { this.ctx = new AC(); } catch (e) { this.ctx = null; }
+  }
+
+  get available() { return !!this.ctx; }
+
+  ping(slot = 1, { force = false } = {}) {
+    if (!force && !this.prefs.gateBeep) return;
+    this.arm();
+    if (!this.ctx) return;
+    try {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = SLOT_PITCH[(slot - 1) % SLOT_PITCH.length];
+      /* Ramped rather than switched: a square wave started and stopped at full
+       * amplitude clicks, and a click is exactly as loud as the beep. */
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.28, t + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.075);
+      osc.connect(gain).connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.09);
+    } catch (e) { /* a beep is never worth an exception */ }
+  }
+}
+
 /** Keep the screen on during a session — a phone locking mid-race is a lost race. */
 export class Wake {
   constructor() { this.lock = null; }

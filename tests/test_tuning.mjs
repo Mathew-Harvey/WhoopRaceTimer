@@ -137,5 +137,76 @@ function watch(values, threshold, quiet = 960, dt = 0.2) {
 
 eq('no passes reads as none', passReport([], 1600).verdict, 'none');
 
+/* ------------------------------------------------- counted, but only just --- */
+/* A trigger tucked just under the weakest peak counts every pass today and
+ * misses on the next flight. Reporting that as "good" is the worst kind of
+ * reassurance, because the failure it sets up is the silent one. */
+{
+  const { sig } = watch([960, 1500, 2400, 1000, 960,
+                         960, 1400, 2380, 1000, 960,
+                         960, 1450, 2350, 1000, 960], 2300);
+  const r = passReport(sig.passes, 2300);
+  eq('a thin margin is not called good', r.verdict, 'fragile');
+  eq('every pass still counted', r.missed, 0);
+  near('and the thinnest margin is named', r.thinnest, 50);
+  check('the fix moves it somewhere safer', r.suggest < 2300 && r.suggest > 960,
+        `suggested ${r.suggest}`);
+  check('and the move is worth making', r.worthIt === true, 'a real move was called noise');
+}
+
+/* A comfortable margin stays good. Nothing is offered for a good gate — that
+ * is decided by the verdict, not by how big the arithmetic move would be. */
+{
+  const { sig } = watch([960, 1500, 2400, 1000, 960,
+                         960, 1400, 2380, 1000, 960], 1600);
+  const r = passReport(sig.passes, 1600);
+  eq('a comfortable gate is good', r.verdict, 'good');
+}
+
+/* worthIt is about the size of the move, not whether one is wanted: a trigger
+ * already sitting where the evidence would put it must not be rewritten to the
+ * timer for a rounding difference. */
+{
+  const { sig } = watch([960, 1500, 2400, 1000, 960,
+                         960, 1400, 2380, 1000, 960], 1741);
+  const r = passReport(sig.passes, 1741);
+  near('the suggestion lands where the trigger already is', r.suggest, 1741, 6);
+  eq('so the move is not worth making', r.worthIt, false);
+}
+
+/* ------------------------------------------- what the timer itself reports --- */
+/* The LapRF measures each pass peak in firmware. It is the only fully
+ * trustworthy peak we ever see, and it used to be decoded and dropped. */
+{
+  const sig = new SlotSignal(1);
+  sig.add(960, 1000);
+  const p = sig.recordHardwarePass(2400, 1600, 960, 1001);
+  check('a reported pass is kept', !!p, 'the timer told us and we ignored it');
+  eq('it counts by definition', p.counted, true);
+  eq('its margin is measured against the trigger', p.margin, 800);
+  eq('and it is marked as the timer speaking', p.source, 'timer');
+}
+
+/* Some units report nothing as zero. Believing that would invent a gate whose
+ * every pass looks like it barely scraped through. */
+{
+  const sig = new SlotSignal(1);
+  sig.add(960, 1000);
+  eq('a zero peak is not a pass', sig.recordHardwarePass(0, 1600, 960, 1001), null);
+  eq('nor is one below the noise', sig.recordHardwarePass(900, 1600, 960, 1002), null);
+  eq('nothing was recorded', sig.passes.length, 0);
+}
+
+/* One crossing seen by both the slow sampler and the timer is one crossing. */
+{
+  const sig = new SlotSignal(1);
+  sig.add(960, 1000);
+  sig.recordHardwarePass(2400, 1600, 960, 1001);
+  sig.recordHardwarePass(2400, 1600, 960, 1001.2);
+  eq('the same crossing is not counted twice', sig.passes.length, 1);
+  sig.recordHardwarePass(2400, 1600, 960, 1009);
+  eq('a later crossing is its own pass', sig.passes.length, 2);
+}
+
 if (failures) { console.error(`\n${failures} failure(s)`); process.exit(1); }
 console.log('gate tuning: all scenarios pass');

@@ -958,7 +958,16 @@ SCREENS.gate = app => {
           h('span.chanchip', h('span.swatch', { style: { background: idVar(slot) } }),
             h('span.name', p.channel),
             h('span.freq', `slot ${slot}`)),
-          h('label.trig', h('span.cap', 'Trigger'), thrInput)),
+          h('label.trig', h('span.cap', 'Trigger'), thrInput),
+          h('button.autotune', { 'aria-pressed': String(!!app.rfFor(slot).auto),
+            title: 'Let this receiver correct its own trigger as you fly',
+            onclick: e => {
+              const on = !app.rfFor(slot).auto;
+              app.saveRf(slot, { auto: on });
+              e.currentTarget.setAttribute('aria-pressed', String(on));
+              toast(on ? `Slot ${slot} will correct itself as you fly`
+                       : `Slot ${slot} left alone`, 'ok');
+            } }, 'Auto')),
         verdict, canvas, readout, passLine);
       slotBox.appendChild(card);
       slotCards.set(slot, { canvas, verdict, readout, thrInput, passLine });
@@ -1081,15 +1090,22 @@ function renderPassLine(app, slot, ref, sig, threshold) {
     mount(ref.passLine, h('span.muted', 'No pass seen yet — fly through the gate.'));
     return;
   }
-  const tone = rep.verdict === 'good' ? 'ok' : rep.missed === rep.seen ? 'bad' : 'warn';
+  const tone = rep.verdict === 'good' ? 'ok'
+             : rep.verdict === 'fragile' ? 'warn'
+             : rep.missed === rep.seen ? 'bad' : 'warn';
   const words = rep.verdict === 'good'
     ? `${plural(rep.seen, 'pass', 'passes')} seen, all would count.`
+    : rep.verdict === 'fragile'
+    /* Counted, but only just. Saying "all would count" here would be true today
+     * and a lie on the next flight, which is the worst kind of reassurance. */
+    ? `${plural(rep.seen, 'pass', 'passes')} seen, all counted — but the closest cleared ` +
+      `by only ${Math.round(rep.thinnest)}. A weaker pass would be missed.`
     : `${plural(rep.seen, 'pass', 'passes')} seen — ${rep.counted} would count, ` +
       `${rep.missed} missed by up to ${Math.round(rep.worstMiss)}.`;
   const kids = [h('span.dot', { 'data-tone': tone }), h('span', words)];
   /* Only offer the fix when there is one: a suggestion that cannot separate a
    * pass from the noise is not an improvement, it is a different mistake. */
-  if (rep.missed && rep.suggest != null && Math.round(rep.suggest) !== Math.round(threshold ?? -1)) {
+  if (rep.verdict !== 'good' && rep.suggest != null && rep.worthIt) {
     kids.push(h('button.ghost', {
       onclick: () => {
         app.saveRf(slot, { threshold: rep.suggest });
@@ -1448,6 +1464,19 @@ function voiceSheet(app) {
     h('div.field', h('label', `Speed`),
       h('input', { type: 'range', min: '0.7', max: '1.6', step: '0.05', value: app.prefs.rate,
         oninput: e => app.savePrefs({ rate: Number(e.target.value) }) })),
+    h('div.field', h('label', 'Gate beep'),
+      h('div.row',
+        h('button', { 'aria-pressed': String(!!app.prefs.gateBeep),
+          onclick: e => {
+            const on = !app.prefs.gateBeep;
+            app.savePrefs({ gateBeep: on });
+            e.currentTarget.setAttribute('aria-pressed', String(on));
+            if (on) app.beeper.ping(1, { force: true });
+          } }, 'Beep on every crossing'),
+        h('button.ghost', { onclick: () => app.beeper.ping(1, { force: true }) }, 'Hear it'))),
+    h('div.muted', 'A tone the instant the timer reports a crossing. Stand at the gate and ' +
+                   'fly through it: if the beep lands with the quad rather than after it, the ' +
+                   'lap times are honest. One pitch per receiver.'),
     h('button.ghost.wide', { onclick: () => v.say('Lap 3, 24.7', { force: true }) },
       'Test a callout')));
 }

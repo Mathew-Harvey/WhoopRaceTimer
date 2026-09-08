@@ -281,7 +281,10 @@ export class SlotSignal {
     if (v == null || threshold == null) return null;
     const quiet = floor ?? this.quiet() ?? this.baseline;
     if (quiet == null) return null;
-    t = t ?? this.lastAt ?? Date.now() / 1000;
+    /* lastAt starts at 0, which is a number and so survives ?? — a fresh slot
+     * would stamp every excursion at the epoch and the de-duplication below
+     * would fold them all into one. */
+    t = t ?? (this.lastAt || Date.now() / 1000);
 
     /* Watch from a third of the way up to the trigger, with a floor under it so
      * a quiet slot does not trip on its own jitter. */
@@ -303,6 +306,34 @@ export class SlotSignal {
     const pass = { peak: done.peak, at: done.at, quiet,
                    counted: done.peak >= threshold,
                    margin: Math.round((done.peak - threshold) * 10) / 10 };
+    this.passes.push(pass);
+    while (this.passes.length > PASS_HISTORY) this.passes.shift();
+    return pass;
+  }
+
+  /**
+   * A pass the timer itself reported, with the peak height it measured.
+   *
+   * This is better evidence than anything sampled here: the LapRF measures the
+   * peak in firmware at its own rate, while status records arrive a few times a
+   * second and may miss the tip of a fast pass entirely. It only ever describes
+   * passes that already cleared the trigger — the timer says nothing about the
+   * ones that missed — so it complements the watcher rather than replacing it.
+   */
+  recordHardwarePass(peak, threshold, floor, t) {
+    if (peak == null || threshold == null) return null;
+    const quiet = floor ?? this.quiet() ?? this.baseline;
+    /* A peak below the quiet level is not a peak; some units report 0 when they
+     * have nothing to say, and believing that would invent a fragile gate. */
+    if (quiet == null || peak <= quiet) return null;
+    /* The excursion in flight is this same pass seen through the slow sampler.
+     * Keeping both would count one crossing twice. */
+    this._pass = null;
+    const at = t ?? (this.lastAt || Date.now() / 1000);
+    const last = this.passes[this.passes.length - 1];
+    if (last && last.source === 'timer' && Math.abs(at - last.at) < 0.5) return null;
+    const pass = { peak, at, quiet, counted: true,
+                   margin: Math.round((peak - threshold) * 10) / 10, source: 'timer' };
     this.passes.push(pass);
     while (this.passes.length > PASS_HISTORY) this.passes.shift();
     return pass;
@@ -344,9 +375,32 @@ export function passReport(passes, threshold) {
   const worstMiss = missed
     ? Math.round(Math.min(...passes.filter(p => !p.counted).map(p => threshold - p.peak)) * 10) / 10
     : 0;
-  const verdict = missed === 0 ? 'good' : counted === 0 ? 'all missed' : 'some missed';
-  return { seen, counted, missed, worstMiss, weakest, suggest, verdict };
+  /* A gate can count every pass and still be wrong. A trigger sitting just
+   * under the weakest peak counts today and misses tomorrow, when the battery
+   * is lower or the quad takes the gate a foot wider — and the failure, when it
+   * comes, is the silent kind. So a thin margin is reported as its own verdict
+   * rather than being rounded up to "fine". */
+  const margins = passes.filter(p => p.counted).map(p => p.peak - threshold);
+  const thinnest = margins.length ? Math.round(Math.min(...margins) * 10) / 10 : null;
+  const span = weakest - quiet;
+  const fragile = missed === 0 && thinnest != null && span > 0 &&
+                  thinnest < span * FRAGILE_FRACTION;
+  const verdict = missed === 0 ? (fragile ? 'fragile' : 'good')
+                : counted === 0 ? 'all missed' : 'some missed';
+  return { seen, counted, missed, worstMiss, weakest, suggest, verdict, thinnest,
+           /* Whether the suggestion is worth making at all: an adjustment
+            * smaller than this is noise, and rewriting the timer for it would
+            * be churn the pilot has to think about for nothing. */
+           worthIt: suggest != null && span > 0 &&
+                    Math.abs(suggest - threshold) > span * WORTH_FRACTION };
 }
+
+/* Below this share of the pass's own height above quiet, a margin is thin
+ * enough to call fragile rather than good. */
+const FRAGILE_FRACTION = 0.15;
+/* And a suggested move smaller than this share of the same span is not worth
+ * making. */
+const WORTH_FRACTION = 0.05;
 
 export class SignalBank {
   constructor(slots = [1, 2, 3, 4]) {

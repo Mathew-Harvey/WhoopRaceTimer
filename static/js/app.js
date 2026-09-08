@@ -90,10 +90,10 @@ class App {
     /* Silently re-attach to a timer this browser already has permission for, so
      * a returning pilot lands on the flying screen and not on a chooser. */
     probeBridge().then(b => { if (b?.available) { this.bridge = b; this.markStructural(); } });
-    for (const [kind, Cls] of [['bluetooth', BleLink], ['usb', SerialLink]]) {
+    for (const kind of ['bluetooth', 'usb']) {
       if (kind === 'bluetooth' && !this.caps.bluetooth) continue;
       if (kind === 'usb' && !this.caps.serial) continue;
-      const link = new Cls();
+      const link = this.makeLink(kind);
       let ok = false;
       try { ok = await link.reconnectKnown(); } catch (e) { ok = false; }
       if (ok) { this.adoptLink(link, kind); return; }
@@ -121,10 +121,7 @@ class App {
                         demo: 'Starting the demo timer…' }[kind] || 'Connecting…';
     this.connectError = null;
     this.render();
-    const link = kind === 'bluetooth' ? new BleLink()
-               : kind === 'usb' ? new SerialLink()
-               : kind === 'bridge' ? new BridgeLink()
-               : new DemoLink();
+    const link = this.makeLink(kind);
     try {
       await link.connect(opts);
       this.connecting = null;
@@ -136,18 +133,34 @@ class App {
     }
   }
 
-  adoptLink(link, kind) {
-    this.link = link;
-    this.linkKind = kind;
-    this.connectError = null;
+  /**
+   * Build a link with its handlers already attached.
+   *
+   * Wiring has to happen before connect(), not after: a link says hello as soon
+   * as it opens, and the timer's reply — which carries the thresholds and
+   * frequencies every other screen reasons about — lands in the gap if nobody
+   * is listening yet.
+   */
+  makeLink(kind) {
+    const link = kind === 'bluetooth' ? new BleLink()
+               : kind === 'usb' ? new SerialLink()
+               : kind === 'bridge' ? new BridgeLink()
+               : new DemoLink();
     link.on('record', rec => this.onRecord(rec));
     link.on('state', () => this.markStructural());
     link.on('lost', () => this.onLinkLost());
     link.on('log', msg => console.debug('[link]', msg));
-    /* Push our own idea of the world onto the timer once it has described
-     * itself — but only after rfSetup has landed, so we adopt its real values
-     * instead of overwriting race frequencies with defaults. */
-    setTimeout(() => this.pushConfig(SLOTS), 900);
+    return link;
+  }
+
+  adoptLink(link, kind) {
+    this.link = link;
+    this.linkKind = kind;
+    this.connectError = null;
+    /* Nothing is written to the timer just because we connected. The link's
+     * hello() asks it to describe itself; adoptRfSetup() then corrects only the
+     * slots where our saved intent actually differs. Writing on connect is how
+     * an app clobbers real race frequencies with its own defaults. */
     if (!this.mode) this.screen = 'choose';
     else this.screen = this.mode === 'solo' ? 'fly' : 'race';
     this.render();
@@ -221,27 +234,38 @@ class App {
      * a real race frequency. */
     const saved = store.load('pilots', {});
     const p = this.race.pilots.get(slot);
-    if (!saved[slot] && rec.frequency && p) {
-      /* Several band/channel pairs share a frequency (R7 and F8 are both
-       * 5880). Only adopt when the frequency genuinely differs, or the pilot's
+    if (!p || !rec.frequency) return;
+    const mine = laprf.channelByName(p.channel).frequency;
+
+    if (!saved[slot]) {
+      /* Never configured here: take the hardware's word for it. Several
+       * band/channel pairs share a frequency (R7 and F8 are both 5880), so only
+       * adopt when the frequency genuinely differs — otherwise the pilot's
        * channel gets silently renamed to a synonym they never chose. */
-      const mine = laprf.channelByName(p.channel).frequency;
       const match = laprf.channelsByFreq(rec.frequency)[0];
       if (mine !== rec.frequency && match) {
         this.race.setPilot(slot, { channel: match.name });
         this.savePilots();
       }
+      return;
     }
+    /* Configured here before: our saved intent wins — but only now that the
+     * timer has said what it is actually holding, and only for the slots that
+     * really differ. */
+    if (mine !== rec.frequency || !!rec.enabled !== p.enabled) this.pushConfig([slot]);
   }
 
   /* ------------------------------------------------------ outbound config -- */
   rfFor(slot) { return this.rf[slot] || {}; }
 
-  /** Queue slots for a config write. Coalesced so a slider does not flood the link. */
+  /** Queue slots for a config write. Coalesced so a slider does not flood the link.
+   *  `now` writes in this tick, not on a timer — the caller may be about to move
+   *  the race into a state where writes are refused. */
   pushConfig(slots = SLOTS, { now = false } = {}) {
     for (const s of slots) this._dirty.add(s);
     clearTimeout(this._writeTimer);
-    this._writeTimer = setTimeout(() => this.flushConfig(), now ? 0 : 260);
+    if (now) this.flushConfig();
+    else this._writeTimer = setTimeout(() => this.flushConfig(), 260);
   }
 
   flushConfig() {
@@ -252,10 +276,14 @@ class App {
       if (!p) continue;
       const { band, channel, frequency } = laprf.channelByName(p.channel);
       const cfg = this.rfFor(slot);
+      const hw = this.timer.rfSetup[slot] || {};
+      /* Fall back to what the timer reported before falling back to a constant:
+       * a made-up threshold written over a working one is how a timer stops
+       * reporting laps for reasons nobody can see. */
       this.link.send(laprf.setRfSetup({
         slot, band, channel, frequency,
-        threshold: Number(cfg.threshold ?? 1600),
-        gain: Number(cfg.gain ?? 58),
+        threshold: Number(cfg.threshold ?? hw.threshold ?? 1600),
+        gain: Number(cfg.gain ?? hw.gain ?? 58),
         enabled: !!p.enabled }));
     }
     this._dirty.clear();
@@ -329,7 +357,10 @@ class App {
     this.sessionBest = null;
     this.lastLap = null;
     if (this.prefs.keepAwake) this.wake.request();
-    this.flushConfig();
+    /* Put the timer into the state this race assumes before the clock starts —
+     * channels, enables and the timer's own minimum lap. Config writes are
+     * refused once staging begins, so this has to happen now. */
+    this.pushConfig(SLOTS, { now: true });
     if (this.settings.countdown > 0) this.race.arm(); else this.race.startNow();
     this.render();
   }
@@ -337,6 +368,7 @@ class App {
   stop() {
     this.race.stop();
     this.wake.release();
+    this.flushConfig();          // anything edited mid-race was held back
     this.render();
   }
 
@@ -344,6 +376,7 @@ class App {
     this.race.reset();
     this.lastLap = null;
     this.sessionBest = null;
+    this.flushConfig();
     this.render();
   }
 

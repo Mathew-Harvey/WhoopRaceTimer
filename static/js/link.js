@@ -306,6 +306,7 @@ export class BridgeLink extends LapRFLink {
       .then(r => r.json());
     if (!info.available) throw new Error(info.reason || 'the local bridge has no timer');
     this._es = new EventSource(this.base + '/bridge/events');
+    let opened = false;
     this._es.onmessage = e => {
       const m = JSON.parse(e.data);
       if (m.type === 'rx') consumeMixed(this, Uint8Array.from(atob(m.b64), c => c.charCodeAt(0)));
@@ -314,9 +315,24 @@ export class BridgeLink extends LapRFLink {
                                                   mode: m.connected ? this.mode : 'disconnected',
                                                   detail: m.detail || 'local bridge' });
     };
+
+    /* Wait for the stream before saying anything. The bridge relays only to
+     * clients already subscribed, so a hello sent during the EventSource
+     * handshake gets a reply nobody is listening for — and the timer's
+     * thresholds, which every other screen reasons about, never arrive. */
+    await new Promise((resolve, reject) => {
+      const giveUp = setTimeout(() => reject(new Error('the local bridge did not start streaming')), 6000);
+      this._es.onopen = () => { opened = true; clearTimeout(giveUp); resolve(); };
+      this._es.onerror = () => {
+        if (opened) return;
+        clearTimeout(giveUp);
+        reject(new Error('could not open the local bridge stream'));
+      };
+    });
     this._es.onerror = () => {
       if (this.connected) { this.setState({ connected: false, mode: 'disconnected' }); this.emit('lost'); }
     };
+
     this.setState({ connected: true, mode: info.mode || 'binary',
                     detail: info.detail || 'WhoopTimer on this machine' });
     this.hello();

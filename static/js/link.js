@@ -37,7 +37,7 @@ const HELLO_DELAY_MS = 300;
 /* How often the timer should report signal. Fast enough that the peak of a
  * pass is caught rather than stepped over, which is what calibration measures;
  * the channel scanner asks for the same rate and the hardware is happy with it. */
-const STATUS_INTERVAL_MS = 200;
+export const STATUS_INTERVAL_MS = 200;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -94,7 +94,7 @@ export class LapRFLink {
   detach() {
     this._dead = true;
     this._handlers = {};
-    for (const m of this._txq) m.resolve?.();
+    for (const m of this._txq) m.resolve?.(false);
     this._txq.length = 0;
   }
   log(msg) { this.emit('log', msg); }
@@ -109,7 +109,7 @@ export class LapRFLink {
     if (patch.connected === false) {
       /* Anything still waiting is never going out now; leaving those promises
        * pending would hang whoever awaited them. */
-      for (const m of this._txq) m.resolve?.();
+      for (const m of this._txq) m.resolve?.(false);
       this._txq.length = 0;
     }
     Object.assign(this, patch);
@@ -129,6 +129,12 @@ export class LapRFLink {
    */
   send(bytes) {
     return new Promise(resolve => {
+      /* A link that is down or retired will never drain this, and a caller
+       * awaiting delivery would wait for the rest of the session. adoptLink
+       * deliberately leaves a replaced Bluetooth link marked connected when the
+       * new link is the same device, so "connected" alone is not enough to
+       * promise anything. */
+      if (this._dead || !this.connected) { resolve(false); return; }
       this._txq.push({ bytes, resolve });
       if (!this._txRunning) this._drain();
     });
@@ -145,7 +151,7 @@ export class LapRFLink {
         try { await this._write(msg); }
         catch (e) { this.log('write failed: ' + e.message); }
         await sleep(MSG_GAP_MS);
-        resolve?.();
+        resolve?.(true);
       }
     } finally {
       this._txRunning = false;

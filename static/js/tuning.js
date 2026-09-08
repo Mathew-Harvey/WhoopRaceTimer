@@ -16,6 +16,7 @@
  */
 'use strict';
 import * as laprf from './laprf.js';
+import { STATUS_INTERVAL_MS } from './link.js';
 
 export const PRESETS = {
   tiny:   { fraction: 0.62, label: 'Tiny track', hint: 'quads are never far from the gate' },
@@ -52,7 +53,7 @@ export function quality(floor, ceiling) {
  * must never let that state sit quietly on screen, because it looks identical
  * to "nobody has flown yet".
  */
-export function gateHealth({ threshold, floor, ceiling, live, enabled = true }) {
+export function gateHealth({ threshold, floor, ceiling, live, enabled = true, ready = false }) {
   if (!enabled) return { level: 'off', title: 'Not racing', detail: 'This slot is switched off.' };
   /* The quiet level is whichever is higher: what was measured, or what the
    * receiver reports right now. A gate tuned in an empty room and then run
@@ -70,6 +71,15 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true }) 
               `gate and never sees a crossing. Tune this gate.`,
       action: 'tune',
     };
+  }
+  /* Calibrated by flying, which is the ordinary way now. The measured floor and
+   * ceiling below come only from the manual wizard, so judging health on them
+   * alone left every self-calibrated receiver reading "still calibrating"
+   * forever — on every screen, immediately after the app had said out loud that
+   * the gate was calibrated. */
+  if (ready && (floor == null || ceiling == null)) {
+    return { level: 'good', title: 'Calibrated',
+             detail: `Trigger ${fmt(threshold)}, set from the laps you flew.` };
   }
   if (floor != null && ceiling != null) {
     const q = quality(floor, ceiling);
@@ -514,6 +524,16 @@ const BAND_PREFERENCE = ['R', 'F', 'E', 'A', 'B'];
  * setting the level for all the others. */
 const OUTLIER_MIN_PASSES = 5;
 
+/* A sweep wants readings as fast as they come; racing wants them fast enough to
+ * catch a peak. They happen to be the same number, but they are not the same
+ * decision. */
+const SCAN_STATUS_MS = 200;
+/* A sweep has to put *something* in the trigger and gain fields of every record
+ * it writes — the receiver takes a whole setup or none of it. These are used
+ * only while sweeping, and only when the slot has no real values of its own;
+ * whatever was there before is written back when the sweep ends. */
+const SCAN_THRESHOLD = 1600, SCAN_GAIN = 58;
+
 export const MIN_PASSES = 3, MAX_PASSES = 6;
 /* Peaks varying by more than this share of their own height above quiet is a
  * track that needs more evidence before anyone calls it calibrated. */
@@ -600,9 +620,16 @@ export class ChannelScanner {
     this.index = 0;
     this.lost = false;
     const cfg = this.rfFor(slot) || {};
+    /* Where this receiver was before the sweep moved it. Putting it back is
+     * this method's responsibility and cannot be delegated: the app's own
+     * config write declines to act on a slot whose trigger nobody knows, which
+     * is exactly the slot a sweep is most likely to be run on — so relying on
+     * it left the receiver parked wherever the sweep ended, which for a raw
+     * frequency sweep is not even a channel. */
+    const before = { ...cfg };
     /* Ask for readings quickly while sweeping; a unit that ignores the request
      * still works, just slower, because each channel waits for real samples. */
-    this.link.send(laprf.setStatusInterval(200));
+    this.link.send(laprf.setStatusInterval(SCAN_STATUS_MS));
     try {
       const points = channels || laprf.ALL_CHANNELS;
       for (let i = 0; i < points.length && this.active; i++) {
@@ -623,7 +650,8 @@ export class ChannelScanner {
         await this.link.send(laprf.setRfSetup({
           slot, band: named?.band ?? 1, channel: named?.channel ?? 1,
           frequency: named?.frequency ?? ch.freq,
-          threshold: cfg.threshold ?? 1600, gain: cfg.gain ?? 58, enabled: true }));
+          threshold: cfg.threshold ?? SCAN_THRESHOLD, gain: cfg.gain ?? SCAN_GAIN,
+          enabled: true }));
         this.index = i;
         /* Only readings that arrived after the retune say anything about this
          * channel; the previous one's value is still in the register until then.
@@ -648,7 +676,20 @@ export class ChannelScanner {
       }
     } finally {
       this.active = false;
-      if (this.link.connected) this.link.send(laprf.setStatusInterval(1000));
+      /* Back to the rate the app runs at, not to a slower one plucked from
+       * nowhere. Restoring 1000 ms here quietly crippled everything that came
+       * after: calibration measures the peak of a pass, and a peak lasts less
+       * than a second, so one use of "find my channel" left every later lap
+       * being stepped over — on a gate that was working perfectly before. */
+      if (this.link.connected) {
+        if (before.frequency) {
+          this.link.send(laprf.setRfSetup({
+            slot, band: before.band, channel: before.channel, frequency: before.frequency,
+            threshold: before.threshold ?? SCAN_THRESHOLD, gain: before.gain ?? SCAN_GAIN,
+            enabled: true }));
+        }
+        this.link.send(laprf.setStatusInterval(STATUS_INTERVAL_MS));
+      }
     }
     return this.results;
   }

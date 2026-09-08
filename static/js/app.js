@@ -45,10 +45,7 @@ class App {
     this.beeper = new Beeper(this.prefs);
     /* Calibration is explained out loud, because nobody at a track is looking
      * at a phone — they are holding a quad or wearing goggles. */
-    this.calCoach = new CalibrationCoach({
-      say: (line, o) => this.voice.say(line, o),
-      note: line => { this.calLine = line; this.markStructural(); },
-    });
+    this.calCoach = new CalibrationCoach({ say: (line, o) => this.voice.say(line, o) });
     this.wake = new Wake();
 
     this.link = null;
@@ -340,7 +337,6 @@ class App {
      * threshold. */
     this.timer = { battery: null, lastRx: 0, rfSetup: {} };
     this._writeTries = {};
-    this._calibSaid = false;
     this.calCoach?.reset();
     /* Nothing is written to the timer just because we connected. The link's
      * hello() asks it to describe itself; adoptRfSetup() then corrects only the
@@ -588,7 +584,10 @@ class App {
     for (const other of SLOTS) {
       if (other === slot) continue;
       const os = this.sig.get(other);
-      for (const q of os.passes) {
+      /* A copy: dropPass splices the very array being walked, so a second
+       * bleed-through inside the same window used to be skipped and survive as
+       * evidence — the one case this exists to catch. */
+      for (const q of [...os.passes]) {
         if (Math.abs(q.at - pass.at) > BLEED_WINDOW_S) continue;
         if (q.peak >= pass.peak * BLEED_RATIO) { this.sig.get(slot).dropPass(pass); return; }
         if (pass.peak >= q.peak * BLEED_RATIO) os.dropPass(q);
@@ -727,7 +726,14 @@ class App {
        * wanted to flip an enable bit. The slot waits: calibration produces a
        * measured level within a few laps, and the write happens then. */
       const threshold = cfg.threshold ?? hw.threshold ?? null;
-      if (threshold == null) continue;
+      if (threshold == null) {
+        /* Nothing to write, but the slot is no longer waiting for anything
+         * either. Leaving it dirty made every later flush retry it forever and
+         * kept "this change reaches the timer when the session ends" on screen
+         * for the whole race. */
+        settled.push(slot);
+        continue;
+      }
       const want = {
         slot, band: rf.band, channel: rf.channel, frequency: rf.frequency,
         threshold: Number(threshold),
@@ -1055,6 +1061,7 @@ class App {
       ceiling: cfg.ceiling ?? null,
       live: this.sig.quiet(slot),
       enabled: p ? p.enabled : true,
+      ready: this.readiness(slot).ready,
     });
     /* Config writes wait while a session runs. A verdict that describes a
      * threshold the timer does not hold yet has to say so. */

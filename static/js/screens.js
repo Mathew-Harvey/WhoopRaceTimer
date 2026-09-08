@@ -254,6 +254,14 @@ function setupNote(app, p) {
   return note;
 }
 
+function applySuggestion(app, slot, sig, rep) {
+  app.saveRf(slot, { threshold: rep.suggest });
+  app.pushConfig([slot], { now: true });
+  sig.rejudge(rep.suggest);       // the laps still count as evidence; the verdicts change
+  toast(`Slot ${slot} trigger set to ${Math.round(rep.suggest)} — fly it again to confirm`, 'ok');
+  app.markStructural();
+}
+
 async function copyCommands(btn, note, text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -1154,13 +1162,37 @@ SCREENS.gate = app => {
  * no arithmetic, no slider hunting.
  */
 function renderPassLine(app, slot, ref, sig, threshold) {
-  const rep = tuning.passReport(sig?.passes || [], threshold);
+  /* The same preset the app tunes with. Omitting it offered a number derived
+   * from the default track while autoTune used the chosen one, so the button
+   * and the app could sit there disagreeing about the same gate. */
+  const rep = tuning.passReport(sig?.passes || [], threshold,
+                                (tuning.PRESETS[app.settings.preset] || {}).fraction);
   const key = `${rep.seen}|${rep.counted}|${rep.worstMiss}|${Math.round(threshold ?? -1)}`;
   if (ref.passLine._t === key) return;
   ref.passLine._t = key;
 
   if (!rep.seen) {
     mount(ref.passLine, h('span.muted', 'No pass seen yet — fly through the gate.'));
+    return;
+  }
+  /* Two verdicts describe a gate that cannot work at all, and both of them
+   * count every pass as a success by raw arithmetic. Falling through to the
+   * generic wording rendered the most broken gate there is as "3 passes seen,
+   * 3 would count, 0 missed" — the exact false reassurance the report was
+   * changed to prevent. */
+  if (rep.verdict === 'below noise' || rep.verdict === 'no trigger') {
+    const fix = rep.suggest != null && rep.worthIt
+      ? [h('button.ghost', { onclick: () => applySuggestion(app, slot, sig, rep) },
+           `Use ${Math.round(rep.suggest)}`)] : [];
+    mount(ref.passLine,
+      h('span.dot', { 'data-tone': 'bad' }),
+      h('span', rep.verdict === 'no trigger'
+        ? `${plural(rep.seen, 'pass', 'passes')} seen, but this receiver has no trigger ` +
+          'level yet, so the timer cannot report a lap.'
+        : `${plural(rep.seen, 'pass', 'passes')} seen, but the trigger sits under this ` +
+          'receiver’s own noise — the timer thinks a quad is permanently in the gate ' +
+          'and never sees a crossing.'),
+      ...fix);
     return;
   }
   const tone = rep.verdict === 'good' ? 'ok'
@@ -1179,14 +1211,8 @@ function renderPassLine(app, slot, ref, sig, threshold) {
   /* Only offer the fix when there is one: a suggestion that cannot separate a
    * pass from the noise is not an improvement, it is a different mistake. */
   if (rep.verdict !== 'good' && rep.suggest != null && rep.worthIt) {
-    kids.push(h('button.ghost', {
-      onclick: () => {
-        app.saveRf(slot, { threshold: rep.suggest });
-        app.pushConfig([slot], { now: true });
-        sig.rejudge(rep.suggest);   // the laps still count as evidence; the verdicts change
-        toast(`Slot ${slot} trigger set to ${Math.round(rep.suggest)} — fly it again to confirm`, 'ok');
-        app.markStructural();
-      } }, `Use ${Math.round(rep.suggest)}`));
+    kids.push(h('button.ghost', { onclick: () => applySuggestion(app, slot, sig, rep) },
+                `Use ${Math.round(rep.suggest)}`));
   }
   mount(ref.passLine, ...kids);
 }
@@ -1557,13 +1583,29 @@ async function fineSweep(app, slot, centre, status, bars, result) {
     sample: s => { const x = app.sig.slots.get(s); return x ? { v: x.value, t: x.lastAt } : null; },
   });
   app.scanning = slot;
-  const points = await scanner.sweepRange(slot, from, to, 2, p => {
-    status.textContent = `Sweeping… ${p.index + 1} of ${p.total}`;
-    drawBars(bars, p.results);
-  });
-  app.scanning = null;
-  app.pushConfig([slot], { now: true });
+  let points = [];
+  try {
+    points = await scanner.sweepRange(slot, from, to, 2, p => {
+      status.textContent = `Sweeping… ${p.index + 1} of ${p.total}`;
+      drawBars(bars, p.results);
+    });
+  } finally {
+    /* Whatever happened, this slot stops being "under a sweep". Leaving that
+     * set makes adoptRfSetup discard every RF-setup record for the receiver for
+     * the rest of the session, so the app can no longer see or correct its
+     * channel — a silent, permanent blinding. */
+    app.scanning = null;
+    app.pushConfig([slot], { now: true });
+  }
   drawBars(bars, points);
+  if (!points.length) {
+    status.textContent = '';
+    mount(result, h('div.note', { 'data-tone': 'bad' },
+      h('strong', 'The sweep did not finish'),
+      'The timer link dropped before anything was measured. Power-cycle it, reconnect, ' +
+      'and try again — your channel is put back automatically.'));
+    return;
+  }
   const top = [...points].sort((a, b) => b.peak - a.peak)[0];
   const named = laprf.channelsByFreq(Number(top.name));
   status.textContent = '';

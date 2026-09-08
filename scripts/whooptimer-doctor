@@ -67,8 +67,18 @@ fi
 # Does the daemon actually produce voices? Installed is not the same as working.
 if command -v spd-say >/dev/null 2>&1; then
   if timeout 15 spd-say -L >/dev/null 2>&1; then
-    NVOICES=$(timeout 15 spd-say -L 2>/dev/null | tail -n +2 | grep -c . || echo 0)
-    ok "speech-dispatcher answers with $NVOICES voices"
+    # grep -c prints 0 and exits non-zero on no match, so "|| echo 0" appended a
+    # second line and the count read "0 0". Worse, zero voices was reported with
+    # a tick — the exact failure this script exists to find, called a pass.
+    NVOICES=$(timeout 15 spd-say -L 2>/dev/null | tail -n +2 | grep -c . )
+    NVOICES=${NVOICES:-0}
+    if [ "$NVOICES" -gt 0 ]; then
+      ok "speech-dispatcher answers with $NVOICES voices"
+    else
+      bad "speech-dispatcher is running but has no voices"
+      info "install a voice: espeak-ng is the usual one"
+      FAILED=1
+    fi
   else
     bad "speech-dispatcher is installed but not answering"
     info "try: systemctl --user restart speech-dispatcherd 2>/dev/null || spd-say hello"
@@ -167,7 +177,18 @@ bold "Bluetooth"
 if ! command -v bluetoothctl >/dev/null 2>&1 && ! [ -d /sys/class/bluetooth ]; then
   bad "no BlueZ on this machine — Web Bluetooth has nothing to talk to"
   CMD="$(pkg_install_cmd)"
-  [ -n "$CMD" ] && run $CMD bluez bluez-utils && CHANGED=1
+  # bluez-utils is what Arch calls it; Debian and Fedora ship the tools in
+  # bluez itself, and asking them for bluez-utils fails the whole install.
+  # Chaining that only into CHANGED=1 meant the failure was never noticed and
+  # the script still exited reporting that nothing needed changing.
+  if command -v pacman >/dev/null 2>&1; then BT_PKGS="bluez bluez-utils"; else BT_PKGS="bluez"; fi
+  if [ -n "$CMD" ]; then
+    # shellcheck disable=SC2086
+    if run $CMD $BT_PKGS; then CHANGED=1; else FAILED=1; fi
+  else
+    info "unknown package manager — install BlueZ by hand"
+    FAILED=1
+  fi
 fi
 
 if command -v systemctl >/dev/null 2>&1; then

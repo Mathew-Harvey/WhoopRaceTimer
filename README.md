@@ -238,12 +238,23 @@ python3 tests/test_protocol_parity.py
 `static/CNAME` (`whooptimer.webfpv.org`) over HTTPS. HTTPS is not optional: Web
 Bluetooth and Web Serial only exist in a secure context.
 
-Two things have to be done once, by hand, before that workflow can succeed:
+Three things have to be done once, by hand:
 
 1. **Settings → Pages → Build and deployment → Source: GitHub Actions.** The
    workflow token is not permitted to create the Pages site itself, so until
-   this is set the deploy fails on `configure-pages` with a 404.
-2. **The DNS record**, below.
+   this is set the deploy fails on `configure-pages` with a 404. Switching the
+   source does not republish on its own — run the workflow (Actions → Deploy to
+   Pages → Run workflow) or push, or Pages keeps serving whatever was there
+   before.
+2. **Settings → Pages → Custom domain → `whooptimer.webfpv.org` → Save.** This
+   is not optional and `static/CNAME` does not do it for you: a CNAME file
+   inside an uploaded artifact only registers the domain under branch-based
+   publishing, not under a GitHub Actions deployment. Until the domain is
+   registered, GitHub answers requests for that host with a 404 and terminates
+   TLS using a fallback certificate, which is what a browser reports as
+   `ERR_CERT_COMMON_NAME_INVALID`. The certificate is issued a few minutes
+   after the domain is saved and the DNS check passes.
+3. **The DNS record**, below.
 
 To point a subdomain at it, add one DNS record at your registrar:
 
@@ -259,13 +270,11 @@ the certificate has issued you may switch the proxy on, but then Cloudflare's
 SSL/TLS mode must be **Full (strict)** or Pages and Cloudflare redirect each
 other in a loop.
 
-Then set the same name under **Settings → Pages → Custom domain** and tick
-*Enforce HTTPS* once the DNS check goes green.
+Tick *Enforce HTTPS* once the DNS check on the Pages settings page goes green.
 
-Do the DNS record before the first deploy: while a `CNAME` file is present,
-Pages redirects the `mathew-harvey.github.io/WhoopRaceTimer` URL to the custom
-domain, so until that name resolves the site is unreachable at either address.
-Delete `static/CNAME` if you want the `github.io` URL back. The apex `webfpv.org` is independent — it can
+`static/CNAME` is kept because it costs nothing and does register the domain if
+anyone ever publishes this repository from a branch instead. It is not what
+makes the custom domain work here — step 2 above is. The apex `webfpv.org` is independent — it can
 serve a different site from a different repository or host entirely, and each
 extra app gets its own subdomain the same way.
 

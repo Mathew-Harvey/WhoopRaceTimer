@@ -38,13 +38,22 @@ SCREENS.topbar = app => {
   }
   bits.push(h('div.spacer'));
   if (app.connected) {
+    const silent = !app.prefs.voiceOn || app.prefs.announce === 'off';
+    const speaks = !silent && app.voice.available;
+    const vLabel = !app.voice.available ? 'No voices' : silent ? 'Silent' : 'Voice';
     bits.push(h('button.pill', {
-      'data-tone': app.prefs.voiceOn && app.voice.available ? 'ok' : '',
-      'aria-label': app.prefs.voiceOn ? 'Voice callouts on' : 'Voice callouts off',
-      onclick: () => { app.voice.arm(true); app.savePrefs({ voiceOn: !app.prefs.voiceOn }); },
-    }, icon(app.prefs.voiceOn ? 'volume' : 'mute', 16),
-       h('span', { style: { display: window.innerWidth < 420 ? 'none' : 'inline' } },
-         app.prefs.voiceOn ? 'Voice' : 'Muted')));
+      'data-tone': speaks ? 'ok' : !app.voice.available ? 'warn' : '',
+      'aria-label': speaks ? 'Voice callouts on' : 'Voice callouts off',
+      title: !app.voice.available ? 'This browser reports no speech voices' : 'Tap to toggle spoken lap times',
+      onclick: () => {
+        app.voice.arm(true);
+        /* One control, one meaning: tapping it makes callouts speak or stop,
+         * whichever of the two settings was in the way. */
+        if (silent) app.savePrefs({ voiceOn: true, announce: app.prefs.announce === 'off' ? 'full' : app.prefs.announce });
+        else app.savePrefs({ voiceOn: false });
+      },
+    }, icon(speaks ? 'volume' : 'mute', 16),
+       h('span', { style: { display: window.innerWidth < 420 ? 'none' : 'inline' } }, vLabel)));
     bits.push(h('button.pill', { 'aria-label': 'Menu', onclick: () => menuSheet(app) },
       icon('gear', 16)));
   }
@@ -83,7 +92,7 @@ function menuSheet(app) {
     item('target', 'Gate & signal', 'Tune what counts as a lap',
          () => { close(); app.go('gate'); }),
     item('list', 'History', 'Saved sessions and export', () => { close(); app.go('history'); }),
-    item('clock', 'Race settings', 'Format, countdown, minimum lap',
+    item('clock', 'Race settings', 'Countdown, minimum lap, holeshot',
          () => { close(); settingsSheet(app); }),
     item('volume', 'Voice', 'Callout style, voice and speed', () => { close(); voiceSheet(app); }),
     item(app.mode === 'solo' ? 'flag' : 'pilot',
@@ -136,6 +145,7 @@ SCREENS.connect = app => {
   /* A bridge that already holds a timer means step 1 is done — saying "switch
    * your timer on" to someone whose timer is plainly on reads as broken. */
   const bridgeReady = !!app.bridge?.available;
+  const canConnect = c.bluetooth || c.serialLikely || bridgeReady;
   const steps = h('div.stack.tight',
     h('div.step', bridgeReady ? { 'data-done': '' } : { 'data-live': '' },
       h('div.n', bridgeReady ? '✓' : '1'),
@@ -147,9 +157,12 @@ SCREENS.connect = app => {
     h('div.step',
       h('div.n', '2'),
       h('div',
-        h('strong', 'Connect below'),
-        h('p.why', 'Your browser will ask which device to use. Nothing is installed and ' +
-                   'nothing leaves this device.'))));
+        h('strong', canConnect ? (bridgeReady ? 'Tap the green button' : 'Connect below')
+                               : 'This browser can’t connect to a timer'),
+        h('p.why', canConnect
+          ? 'Your browser will ask which device to use. Nothing is installed and nothing leaves this device.'
+          : 'Open this page in Chrome or Edge (or Bluefy on an iPhone), or run WhoopTimer on a ' +
+            'laptop and open the address it prints — see the link below.'))));
 
   const buttons = h('div.stack.tight');
   const option = (primary, glyph, title, sub, kind) =>
@@ -170,21 +183,21 @@ SCREENS.connect = app => {
     opts.push(['bluetooth', 'bluetooth', 'Connect by Bluetooth', 'Recommended — full lap timing']);
   }
   if (bridgeReady) {
-    opts.push(['bridge', 'plug', 'Use the timer on this computer',
-               app.bridge.detail ? `WhoopTimer here already holds ${app.bridge.detail}`
-                                 : 'WhoopTimer is running here and already holds the link']);
+    opts.push(['bridge', 'plug', 'Use the timer WhoopTimer is holding',
+               (app.bridge.detail ? `${app.bridge.detail} — ` : '') +
+               'via the computer running WhoopTimer, which already has the link']);
   }
   if (c.serialLikely) {
     opts.push(['usb', 'usb', 'Connect by USB cable',
-               'Signal and tuning; lap records only if this unit speaks binary over USB']);
+               'Signal and gate tuning only on most units — timing laps needs Bluetooth']);
   }
   opts.forEach(([kind, glyph, title, sub], i) =>
-    buttons.appendChild(option(i === 0, glyph, title, sub, kind)));
+    buttons.appendChild(option(i === 0 && kind !== 'usb', glyph, title, sub, kind)));
 
   const notes = h('div.stack.tight');
   if (app.race.active) {
     notes.appendChild(h('div.note', { 'data-tone': 'warn' },
-      h('strong', dropped ? 'A session is still running' : 'A session was restored'),
+      h('strong', 'A session is still running' + (app.restored && !dropped ? ' (restored after the reload)' : '')),
       'Connect to keep timing from the gate, or press Esc to go back to it — laps by hand ' +
       '(keys 1–4) count either way.'));
   }
@@ -195,7 +208,7 @@ SCREENS.connect = app => {
         h('button.ghost', { onclick: () => app.connect('bluetooth', { showAll: true }) },
           'Show all Bluetooth devices'))));
   }
-  if (!c.bluetooth) {
+  if (!c.bluetooth && !bridgeReady) {
     notes.appendChild(h('div.note', { 'data-tone': 'warn' },
       h('strong', 'This browser can’t reach Bluetooth'), c.advice));
   }
@@ -209,7 +222,9 @@ SCREENS.connect = app => {
   mount(inner, hero, steps, buttons, notes,
     h('div.linkrow',
       h('button', { onclick: () => app.connect('demo') }, 'Try it without a timer'),
-      h('button', { onclick: () => helpSheet(app) }, 'My timer isn’t showing up')));
+      h('button', { onclick: () => helpSheet(app) }, 'My timer isn’t showing up'),
+      !canConnect && h('a', { href: 'https://github.com/Mathew-Harvey/WhoopRaceTimer#running-it-locally',
+                              target: '_blank', rel: 'noopener' }, 'Get the local app')));
   return { node };
 };
 
@@ -329,13 +344,11 @@ SCREENS.fly = app => {
     icon('undo', 18), narrow() ? ' Undo' : ' Undo lap');
   const manualBtn = h('button.ghost', { title: 'Log a lap the timer missed',
     onclick: () => app.manualLap(1) }, 'Lap now');
-  const endBtn = h('button.ghost', { onclick: () => app.stop() },
-    narrow() ? 'End' : 'End session');
-  bar.append(primary, h('div.subactions', undoBtn, manualBtn, endBtn));
+  bar.append(primary, h('div.subactions', undoBtn, manualBtn));
 
   primary.addEventListener('click', () => {
     const s = app.race.state;
-    if (s === 'running' || s === 'staging') app.stop();
+    if (s === 'running' || s === 'staging') app.requestStop();
     else if (s === 'finished') { app.resetRace(); app.start(); }
     else app.start();
   });
@@ -414,7 +427,6 @@ SCREENS.fly = app => {
       'primary wide ' + (running ? 'danger' : blind ? 'warn' : 'go'));
     undoBtn.disabled = p.lapCount === 0;
     manualBtn.disabled = s !== 'running';
-    endBtn.disabled = s !== 'running' && s !== 'staging';
     /* Changing channel mid-session would not reach the timer until the session
      * ends, so the chip would say R6 while the receiver sat on R1. */
     chanSel.disabled = running;
@@ -714,12 +726,13 @@ function raceLive(app) {
     const pos = h('div.pos.num', '—');
     const nm = h('div.nm', p.name);
     const ch = h('span.ch', p.channel);
-    const row = h('div.trow', { style: { borderLeftColor: idVar(p.slot) },
-                                onclick: () => app.manualLap(p.slot),
-                                title: 'Tap to add a lap by hand' },
+    const addLap = h('button.quiet.addlap', { 'aria-label': `Add a lap by hand for ${p.name}`,
+                                               title: 'Add a lap the receiver missed',
+                                               onclick: () => app.manualLap(p.slot) }, '+ lap');
+    const row = h('div.trow', { style: { borderLeftColor: idVar(p.slot) } },
       pos,
       h('div.who', nm, h('div.meta', ch, h('span', 'slot ' + p.slot))),
-      h('div.times', ...Object.values(cells).map(c => c.node)));
+      h('div.times', ...Object.values(cells).map(c => c.node), addLap));
     rows.set(p.slot, { row, pos, cells });
     tower.appendChild(row);
   }
@@ -763,13 +776,14 @@ function raceLive(app) {
     });
     tower.style.display = 'grid';
 
+    for (const [slot, ref] of rows) ref.row.querySelector('.addlap').disabled = r.state !== 'running';
     if (r.state === 'finished') {
       setPrimary(primary, 'play', 'Set up the next race', 'primary go wide');
       primary.onclick = () => app.resetRace();
     } else {
       setPrimary(primary, 'stop', r.state === 'staging' ? 'Cancel start' : 'Stop the race',
                  'primary danger wide');
-      primary.onclick = () => (r.state === 'staging' ? app.resetRace() : app.stop());
+      primary.onclick = () => app.requestStop();
     }
   };
   update();
@@ -952,7 +966,7 @@ SCREENS.gate = app => {
     const paint = performance.now() - lastDraw > 90;
     if (paint) lastDraw = performance.now();
     if (app.cal.phase !== phaseSeen) { phaseSeen = app.cal.phase; evidence = drawWizard(); }
-    applyCoach(gateCoach, app.coach());
+    { const c = app.coach(); gateCoach.hidden = c.tone === 'ok'; if (!gateCoach.hidden) applyCoach(gateCoach, c); }
     /* Samples from the receivers actually racing are what the wizard needs;
      * an idle slot contributing nothing must not hold the count at zero. */
     const racingSlots = app.race.racing.map(p => p.slot);

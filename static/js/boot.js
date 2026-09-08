@@ -12,6 +12,9 @@ const staging = document.getElementById('staging');
 const cdNum = document.getElementById('cdNum');
 const cdTip = document.getElementById('cdTip');
 const goFlash = document.getElementById('goflash');
+/* The countdown covers the whole screen, so the one thing anyone needs during
+ * it has to live on the overlay itself. */
+document.getElementById('cdCancel').addEventListener('click', () => app.resetRace());
 let spokenAt = null, lastState = 'idle';
 
 function overlayTick() {

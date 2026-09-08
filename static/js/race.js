@@ -335,8 +335,9 @@ export class Race {
     }
     this._log(`${p.name} lap ${removed.n} removed (${removed.time.toFixed(2)}s)`);
     this.onChange();
-    return { ok: true, message: resumed ? `removed lap ${removed.n} — racing again` : `removed lap ${removed.n}`,
-             resumed };
+    return { ok: true, name: p.name, n: removed.n, resumed,
+             message: resumed ? `Removed ${p.name}’s lap ${removed.n} — racing again`
+                              : `Removed ${p.name}’s lap ${removed.n}` };
   }
 
   /** The most recent lap across everyone, for a one-tap undo. */

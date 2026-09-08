@@ -305,7 +305,17 @@ class App {
     this.markStructural();
   }
 
-  async disconnect() {
+  disconnect() {
+    if (this.race.active) {
+      confirmSheet('Disconnect the timer?',
+        'The session keeps running and laps by hand still count. You can reconnect at any time.',
+        'Disconnect', () => this._disconnect(), { danger: false });
+      return;
+    }
+    return this._disconnect();
+  }
+
+  async _disconnect() {
     try { await this.link?.disconnect(); } catch (e) {}
     this.link?.detach();
     this.link = null; this.linkKind = null;
@@ -497,6 +507,7 @@ class App {
         'End and switch', () => { this.stop(); this.useMode(mode); });
       return;
     }
+    if (this.race.state === 'finished') this.race.reset();   // its laps are already in history
     this.mode = mode;
     store.save('mode', mode);
     if (mode === 'solo') {
@@ -517,6 +528,10 @@ class App {
     if (!this.race.racing.length) { toast('Switch on at least one pilot first'); return; }
     if (this.race.active) return;
     this.voice.arm();
+    if (!this.voice.available && this.prefs.voiceOn && !this._voiceWarned) {
+      this._voiceWarned = true;
+      toast('This browser has no speech voices — lap times show on screen but are not spoken.', 'err', 8000);
+    }
     this.sessionBest = null;
     this.lastLap = null;
     if (this.prefs.keepAwake) {
@@ -535,6 +550,21 @@ class App {
     this.pushConfig(SLOTS, { now: true });
     if (this.settings.countdown > 0) this.race.arm(); else this.race.startNow();
     this.render();
+  }
+
+  /**
+   * What every Stop control and the space bar call. During the countdown it is
+   * a cancel — nothing is saved and nothing is spoken. A running race with more
+   * than one pilot asks first: one brush of a thumb on a phone should not end
+   * four people's heat. Solo practice stops instantly; there is nothing to lose.
+   */
+  requestStop() {
+    if (this.race.state === 'staging') { this.resetRace(); return; }
+    if (this.race.state !== 'running') return;
+    if (this.race.solo || this.race.open) { this.stop(); return; }
+    confirmSheet('Stop the race?',
+      'Every pilot’s laps so far become the result and it is saved. A stopped race cannot be resumed.',
+      'Stop the race', () => this.stop());
   }
 
   stop() {
@@ -563,13 +593,19 @@ class App {
     this.recomputeSessionBest();
     this.lastLap = null;
     this.checkpoint();
+    /* A finished race is already in history; an undo that changes it has to
+     * change what was saved, not only what is on screen. */
+    if (r.ok && this.race.state === 'finished' && this.race.racing.some(p => p.lapCount)) {
+      store.appendHistory(this.race.results());
+    }
     if (r.resumed) { closeSheet(); if (this.prefs.keepAwake) this.wake.request(); }
     this.render();
   }
 
   manualLap(slot) {
     if (this.race.state !== 'running') { toast('Start the session first'); return; }
-    if (this.race.onPassing(slot)) toast(`Manual lap for slot ${slot}`, 'ok');
+    const p = this.race.pilots.get(slot);
+    if (this.race.onPassing(slot)) toast(this.race.solo ? 'Lap added by hand' : `Lap added for ${p?.name || 'slot ' + slot}`, 'ok');
     else toast('Ignored — inside the minimum lap time');
   }
 
@@ -664,9 +700,14 @@ class App {
         return { tone: 'ok', text: this.race.solo
           ? 'Fly through the gate. Every crossing is a lap.'
           : 'Racing. Tap a pilot to add a lap by hand if a receiver misses one.' };
-      case 'finished':
-        return { tone: 'ok', text: 'Session saved. Go again, or look at the results.',
-                 action: { label: 'Go again', fn: () => { this.resetRace(); this.start(); } } };
+      case 'finished': {
+        const saved = store.load('history', []).some(e => e.runId === this.race.runId);
+        const back = () => { this.go(this.mode === 'solo' ? 'fly' : 'race'); this.resetRace(); this.start(); };
+        return { tone: 'ok',
+                 text: saved ? 'Session saved. Go again, or look at the results.'
+                             : 'Nothing was recorded. Go again when you are ready.',
+                 action: { label: 'Go again', fn: back } };
+      }
       default:
         return { tone: 'ok', text: this.race.solo
           ? 'Ready. Tap Start, then fly through the gate.'
@@ -726,6 +767,7 @@ class App {
   onKey(e) {
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
     const k = e.key;
+    if (k === 'Escape' && this.race.state === 'staging') { this.resetRace(); e.preventDefault(); return; }
     /* A sheet owns the keyboard while it is open: Space on its focused Cancel
      * must cancel, not stop the race behind it. */
     if (sheetOpen()) return;
@@ -734,7 +776,7 @@ class App {
     if (k === ' ') {
       if (!onSession) return;
       e.preventDefault();
-      if (this.race.active) this.stop();
+      if (this.race.active) this.requestStop();
       else this.start();
       return;
     }

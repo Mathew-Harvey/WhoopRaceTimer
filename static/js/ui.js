@@ -102,9 +102,17 @@ export function icon(name, size) {
 export function toast(msg, kind = 'info', ms = 4200) {
   const host = $('#toasts');
   if (!host) return;
+  /* The same message twice in a row says nothing new; a stack of five hides
+   * the action bar. */
+  const last = host.lastElementChild;
+  if (last && last.textContent === msg) { last._bump?.(); return; }
+  while (host.children.length >= 3) host.firstElementChild.remove();
   const t = h('div.toast', { class: kind }, msg);
+  let timer;
+  const arm = () => { clearTimeout(timer); timer = setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 280); }, ms); };
+  t._bump = arm;
   host.appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 280); }, ms);
+  arm();
 }
 
 /* ------------------------------------------------------------------ sheets -- */

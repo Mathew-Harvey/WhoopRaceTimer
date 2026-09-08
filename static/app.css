@@ -421,6 +421,9 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 .trow .times .v[data-tone=purple]{color:var(--t-purple)}
 .trow .times .v[data-tone=green]{color:var(--t-green)}
 .trow .times .v[data-tone=none]{color:var(--t-none)}
+.trow .addlap{min-height:40px;padding:6px 12px;font-size:var(--t-13);border:1px solid var(--line);
+  align-self:center;white-space:nowrap}
+.trow .addlap:disabled{opacity:.35}
 .trow.hit{animation:rowhit 700ms var(--ease)}
 @keyframes rowhit{0%{border-color:var(--state-green);background:var(--surface-1);background:color-mix(in srgb,var(--state-green) 14%,var(--surface-1))}
                   100%{border-color:var(--line-subtle);background:var(--surface-1)}}
@@ -495,6 +498,7 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
   color:var(--state-amber);line-height:.85}
 .ov .goword{font-family:var(--font-num);font-size:var(--t-go);font-weight:900;color:var(--state-green)}
 .ov .stagetip{color:var(--fg-2);font-size:var(--t-20);text-align:center;margin-top:var(--s4)}
+.ov .cancel{margin-top:var(--s5);min-height:52px;padding:0 28px;font-size:var(--t-17)}
 
 .sheet{position:fixed;inset:0;z-index:70;display:flex;align-items:flex-end;justify-content:center;
   background:rgb(3 5 8 / .72);padding:0}

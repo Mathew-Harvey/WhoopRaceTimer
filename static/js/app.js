@@ -78,10 +78,15 @@ class App {
         if (this._deferredRender) this._flushRender();
       }, true);
     }
-    let resizeT = null;
+    /* Only a change of breakpoint matters — labels and layout branch on it. A
+     * phone's address bar sliding away fires resize constantly, and rebuilding
+     * on that would throw away scroll position mid-scroll. */
+    let wasNarrow = innerWidth < 560;
     addEventListener('resize', () => {
-      clearTimeout(resizeT);
-      resizeT = setTimeout(() => this.markStructural(), 180);
+      const narrow = innerWidth < 560;
+      if (narrow === wasNarrow) return;
+      wasNarrow = narrow;
+      this.markStructural();
     });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && this.race.state === 'running') this.wake.request();

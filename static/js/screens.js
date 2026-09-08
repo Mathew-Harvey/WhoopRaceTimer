@@ -391,9 +391,12 @@ SCREENS.fly = app => {
 
     const s = r.state;
     const running = s === 'running' || s === 'staging';
+    const blind = !running && hp.fatal;
     mount(primary, icon(running ? 'stop' : 'play', 22),
-      running ? 'Stop' : s === 'finished' ? 'Go again' : 'Start flying');
-    primary.className = 'primary wide ' + (running ? 'danger' : 'go');
+      running ? 'Stop'
+      : blind ? 'Start anyway — laps may not record'
+      : s === 'finished' ? 'Go again' : 'Start flying');
+    primary.className = 'primary wide ' + (running ? 'danger' : blind ? 'warn' : 'go');
     undoBtn.disabled = p.lapCount === 0;
     manualBtn.disabled = s !== 'running';
     endBtn.disabled = s !== 'running' && s !== 'staging';
@@ -420,9 +423,14 @@ function splitDecimal(node) {
 
 function statCell(label) {
   const v = h('div.v.num', '—');
-  return { node: h('div.stat', v, h('div.cap', label)),
-           set: (text, tone) => { v.textContent = text; if (tone) v.dataset.tone = tone;
-                                  else delete v.dataset.tone; } };
+  return {
+    node: h('div.stat', v, h('div.cap', label)),
+    set: (text, tone) => {
+      if (v.textContent !== text) v.textContent = text;
+      if (tone) { if (v.dataset.tone !== tone) v.dataset.tone = tone; }
+      else if ('tone' in v.dataset) delete v.dataset.tone;
+    },
+  };
 }
 
 const fmtOrDash = v => v == null ? '—' : fmt2(v);
@@ -578,10 +586,16 @@ function raceSetup(app) {
     applyCoach(coach, app.coach());
     formatLine.textContent = app.race.formatLine();
     const n = app.race.racing.length;
+    /* A receiver that cannot detect a lap makes this race record nothing. The
+     * button still works — it is their call — but it stops looking like the
+     * obvious next thing to press, and says what it is agreeing to. */
+    const blind = app.race.racing.some(p => app.health(p.slot).fatal);
     mount(primary, icon('play', 22),
       n === 0 ? 'Switch on at least one pilot' :
+      blind ? 'Start anyway — laps may not record' :
       app.settings.countdown > 0 ? `Arm the race · ${plural(n, 'pilot')}`
                                  : `Start now · ${plural(n, 'pilot')}`);
+    primary.className = 'primary wide ' + (blind ? 'warn' : 'go');
     primary.disabled = n === 0;
   };
   update();
@@ -701,8 +715,14 @@ function raceLive(app) {
 
 function towerCell(label) {
   const v = h('div.v.num', '—');
-  return { node: h('div.cell', v, h('div.cap', label)),
-           set: (t, tone) => { v.textContent = t; if (tone) v.dataset.tone = tone; else delete v.dataset.tone; } };
+  return {
+    node: h('div.cell', v, h('div.cap', label)),
+    set: (t, tone) => {
+      if (v.textContent !== t) v.textContent = t;
+      if (tone) { if (v.dataset.tone !== tone) v.dataset.tone = tone; }
+      else if ('tone' in v.dataset) delete v.dataset.tone;
+    },
+  };
 }
 
 /* ============================================================== gate ====== */
@@ -714,8 +734,7 @@ SCREENS.gate = app => {
 
   const wizardBox = h('div.card.stack');
   const slotBox = h('div.stack');
-  const advanced = h('details.card',
-    h('summary', { style: { cursor: 'pointer', fontWeight: '700' } }, 'Advanced'));
+  const advanced = h('details.card');
 
   const drawWizard = () => {
     const phase = app.cal.phase;
@@ -845,7 +864,12 @@ SCREENS.gate = app => {
     wizardBox, slotBox, advanced);
 
   let phaseSeen = app.cal.phase;
+  let lastDraw = 0;
   const update = () => {
+    /* The timer reports signal a few times a second at best, so redrawing four
+     * instruments every animation frame buys nothing and costs battery. */
+    const paint = performance.now() - lastDraw > 90;
+    if (paint) lastDraw = performance.now();
     if (app.cal.phase !== phaseSeen) { phaseSeen = app.cal.phase; evidence = drawWizard(); }
     const counts = Object.values(app.cal.counts || {});
     const samples = counts.length ? Math.min(...counts) : 0;
@@ -876,8 +900,10 @@ SCREENS.gate = app => {
           kv('Quiet', cfg.floor == null ? 'not measured' : Math.round(cfg.floor)),
           kv('Pass peak', cfg.ceiling == null ? 'not measured' : Math.round(cfg.ceiling)));
       }
-      drawMeter(ref.canvas, { live, floor: cfg.floor, ceiling: cfg.ceiling,
-                              threshold: cfg.threshold, series: sig?.series() || [] });
+      if (paint) {
+        drawMeter(ref.canvas, { live, floor: cfg.floor, ceiling: cfg.ceiling,
+                                threshold: cfg.threshold, series: sig?.series() || [] });
+      }
     }
   };
   update();

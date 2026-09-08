@@ -245,7 +245,10 @@ whooptimer.webfpv.org.   CNAME   mathew-harvey.github.io.
 ```
 
 then set the same name under the repository's **Settings → Pages → Custom
-domain** and tick *Enforce HTTPS*. The apex `webfpv.org` is independent — it can
+domain** and tick *Enforce HTTPS*. Do the DNS record first: while a `CNAME` file
+is present, Pages redirects the `mathew-harvey.github.io/WhoopRaceTimer` URL to
+the custom domain, so until that name resolves the site is unreachable at either
+address. Delete `static/CNAME` if you want the `github.io` URL back. The apex `webfpv.org` is independent — it can
 serve a different site from a different repository or host entirely, and each
 extra app gets its own subdomain the same way.
 

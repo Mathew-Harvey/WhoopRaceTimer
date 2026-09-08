@@ -91,7 +91,12 @@ export class LapRFLink {
    *  and Chrome hands both links the same GATT characteristic, so a retired
    *  link's pending frames interleave 20 bytes at a time with the new link's
    *  and the timer is fed two records spliced together. */
-  detach() { this._dead = true; this._handlers = {}; this._txq.length = 0; }
+  detach() {
+    this._dead = true;
+    this._handlers = {};
+    for (const m of this._txq) m.resolve?.();
+    this._txq.length = 0;
+  }
   log(msg) { this.emit('log', msg); }
 
   /** True once config writes will actually reach the timer. */
@@ -101,28 +106,46 @@ export class LapRFLink {
     /* Messages queued for a link that just dropped belong to a conversation
      * that is over. Replaying them after a reconnect (a scan's channel hops,
      * say) would drive the timer somewhere nobody asked for. */
-    if (patch.connected === false) this._txq.length = 0;
+    if (patch.connected === false) {
+      /* Anything still waiting is never going out now; leaving those promises
+       * pending would hang whoever awaited them. */
+      for (const m of this._txq) m.resolve?.();
+      this._txq.length = 0;
+    }
     Object.assign(this, patch);
     this.emit('state', this);
   }
 
-  /** Queue a message. Delivery is serialised and paced by the subclass. */
+  /**
+   * Queue a message. Delivery is serialised and paced by the subclass.
+   *
+   * Resolves when the frame has actually gone out, not when it was queued.
+   * Those are far apart: a config record is chunked into twenty-byte writes
+   * thirty milliseconds apart with another sixty between messages, so a
+   * caller that starts timing from the call has started it more than a tenth
+   * of a second early. That matters to anything that retunes a receiver and
+   * then measures it — see ChannelScanner, where it was reading the previous
+   * channel's signal and attributing it to the next one.
+   */
   send(bytes) {
-    this._txq.push(bytes);
-    if (!this._txRunning) this._drain();
+    return new Promise(resolve => {
+      this._txq.push({ bytes, resolve });
+      if (!this._txRunning) this._drain();
+    });
   }
 
   async _drain() {
     this._txRunning = true;
     try {
       while (this._txq.length && this.connected && !this._dead) {
-        const msg = this._txq.shift();
+        const { bytes: msg, resolve } = this._txq.shift();
         /* Every outbound frame, in the console. When a timer misbehaves the
          * only question that matters is what it was told immediately before. */
         this.log('tx ' + [...msg].map(b => b.toString(16).padStart(2, '0')).join(''));
         try { await this._write(msg); }
         catch (e) { this.log('write failed: ' + e.message); }
         await sleep(MSG_GAP_MS);
+        resolve?.();
       }
     } finally {
       this._txRunning = false;

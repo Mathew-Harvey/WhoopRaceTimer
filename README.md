@@ -219,6 +219,13 @@ is treated as a tie, broken toward Raceband and then Fatshark because that is
 what whoop and HDZero pilots fly. Every tied name is offered on screen as well:
 the pilot can read the answer off their goggles, which the radio cannot.
 
+A sweep waits for the receiver, not for the queue. Retuning is chunked and
+paced, so a settle clock started when the instruction was queued expires while
+the receiver is still on the old frequency — and the reading taken there then
+counts as the new channel's. Because the rule deliberately takes the lower of
+two readings, a stale value from a quiet neighbour actively wins, which biases
+whole regions of a sweep by whatever preceded them.
+
 When a label and a measurement disagree badly — a quad the goggles call R8,
 5917, reading a thousand counts stronger at E7, 5925 — the channel sweep cannot
 settle it, because between those two labels there is nothing to look at. So

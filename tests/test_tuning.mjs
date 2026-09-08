@@ -85,6 +85,46 @@ function sweep(overrides) {
   eq('a flat sweep is not confident', b.confident, false);
 }
 
+/* ------------------------------------------------- a sweep that waits ----- */
+/* Reported from a real flight: a quad on 5917 read a thousand counts stronger
+ * eight megahertz away at 5925. The cause was timing, not radio. Retuning is
+ * queued and paced — chunked writes thirty milliseconds apart — so a settle
+ * clock started when the instruction was queued expires while the receiver is
+ * still on the previous frequency. The reading taken there then counts as the
+ * new channel's, and because the rule deliberately takes the lower of two, a
+ * stale reading from a quiet neighbour actively wins.
+ *
+ * That biases whole regions of the sweep by whatever preceded them: 5925 came
+ * after a frequency near the signal and 5917 came after one nowhere near it. */
+{
+  const order = [5880, 5917, 5925];
+  const truth = { 5880: 900, 5917: 2400, 5925: 1500 };
+  let onAir = 5880, i = 0;
+  const link = {
+    connected: true,
+    /* Transmission takes real time, and the receiver only moves once it lands —
+     * and only for a tuning record, not for the status-rate request the sweep
+     * opens with. */
+    send: async f => {
+      await new Promise(r => setTimeout(r, 120));
+      const isTune = f[5] === 0x02 && f[6] === 0xda;
+      if (isTune) onAir = order[Math.min(++i, order.length - 1)];
+    },
+  };
+  const sc = new ChannelScanner({
+    link,
+    rfFor: () => ({ threshold: 1600, gain: 58 }),
+    sample: () => ({ v: truth[onAir], t: Date.now() / 1000 }),
+    settleMs: 260, maxWaitMs: 900,
+  });
+  const rows = await sc.sweepRange(1, 5917, 5925, 8);
+  const by = Object.fromEntries(rows.map(r => [r.name, r.peak]));
+  eq('the strong frequency reads strong', by['5917'], 2400);
+  eq('and its weaker neighbour reads weak', by['5925'], 1500);
+  check('the neighbour is not inflated past it', by['5925'] < by['5917'],
+        `5925 read ${by['5925']} against 5917 at ${by['5917']}`);
+}
+
 /* ------------------------------------------------------------- ceiling --- */
 /* A pass is several samples rising and falling; a spike is one sample. The
  * ceiling has to keep the first and ignore the second, because it sets the

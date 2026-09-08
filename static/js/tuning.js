@@ -576,7 +576,10 @@ export class ChannelScanner {
    * settleMs how long after a retune the first reading is distrusted
    * maxWaitMs give up on a channel after this long without two fresh samples
    */
-  constructor({ link, rfFor, sample, settleMs = 120, maxWaitMs = 1800 }) {
+  /* Long enough to cover a whole status interval after the retune lands, so the
+   * first reading accepted is one the timer took on the new frequency rather
+   * than the last one it had already prepared on the old. */
+  constructor({ link, rfFor, sample, settleMs = 260, maxWaitMs = 2400 }) {
     this.link = link;
     this.rfFor = rfFor;
     this.sample = sample;
@@ -608,7 +611,16 @@ export class ChannelScanner {
         /* A named channel carries a band and channel index; a raw frequency
          * point does not, and the receiver tunes by frequency either way. */
         const named = ch.name && laprf.BANDS[ch.name[0]] ? laprf.channelByName(ch.name) : null;
-        this.link.send(laprf.setRfSetup({
+        /* Awaited: the settle clock has to start when the receiver was actually
+         * retuned, not when the instruction joined a queue. Starting it early
+         * lets a reading taken on the *previous* frequency count as this one's,
+         * and since the rule below deliberately takes the lower of two, a stale
+         * reading from a quiet neighbour actively wins. That is not noise — it
+         * biases whole regions of the sweep by whatever preceded them, which is
+         * how a quad sitting on 5917 came to read a thousand counts stronger at
+         * 5925, eight megahertz away: the channel before 5925 was near the
+         * signal and the channel before 5917 was nowhere near it. */
+        await this.link.send(laprf.setRfSetup({
           slot, band: named?.band ?? 1, channel: named?.channel ?? 1,
           frequency: named?.frequency ?? ch.freq,
           threshold: cfg.threshold ?? 1600, gain: cfg.gain ?? 58, enabled: true }));

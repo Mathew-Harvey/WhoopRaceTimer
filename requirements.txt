@@ -1,2 +1,4 @@
-pyserial>=3.5
+# Only needed to run the local bridge (server.py). The hosted app at
+# whooptimer.webfpv.org needs none of this — the browser owns the link.
 bleak>=0.21
+pyserial>=3.5

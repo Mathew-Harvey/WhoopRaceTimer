@@ -1,6 +1,12 @@
 #!/usr/bin/env sh
-# WhoopTimer launcher. Never needs root: Bluetooth is the control transport, and
-# the optional USB fallback only needs your user to be in the serial group.
+# WhoopTimer launcher — the local host and timer bridge.
+#
+# You only need this if your browser has no Web Bluetooth (Firefox, Safari), or
+# you want to run the app on a phone or tablet over the track's wifi. On Chrome
+# or Edge, just open https://whooptimer.webfpv.org instead.
+#
+# Never needs root: Bluetooth is the control transport, and the optional USB
+# fallback only needs your user to be in the serial group.
 #
 #   ./whooptimer              serve on localhost only
 #   ./whooptimer --lan        also reachable from a phone on the same network
@@ -18,7 +24,7 @@ if [ -z "$PY" ]; then
 fi
 
 if ! "$PY" -c "import bleak" >/dev/null 2>&1; then
-  echo "Bluetooth support missing (bleak). The timer cannot be controlled without it."
+  echo "Bluetooth support missing (bleak); this bridge can only offer USB."
   echo "  pip install -r requirements.txt"
   echo
 fi

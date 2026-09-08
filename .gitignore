@@ -1,10 +1,11 @@
-# runtime state — pilots, settings, thresholds, race history
-data/
-
-# working backups and captures
+# scratch captures and working backups
 backups/
+
+# the old server kept runtime state here; the browser now holds it all
+data/
 
 __pycache__/
 *.pyc
 *.pyo
 .venv/
+node_modules/

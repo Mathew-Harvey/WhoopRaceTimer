@@ -199,6 +199,12 @@ SCREENS.connect = app => {
     notes.appendChild(h('div.note', { 'data-tone': 'warn' },
       h('strong', 'This browser can’t reach Bluetooth'), c.advice));
   }
+  if (c.bluetooth && !c.offlineCapable) {
+    notes.appendChild(h('div.note',
+      h('strong', 'No offline copy in this browser'),
+      'This browser cannot store the app for use without signal. Open it once while you ' +
+      'still have coverage on the way to the track, and keep the tab open.'));
+  }
 
   mount(inner, hero, steps, buttons, notes,
     h('div.linkrow',
@@ -1236,8 +1242,13 @@ SCREENS.history = app => {
   const list = h('div.stack');
   const races = store.load('history', []).slice().reverse();
 
-  const csv = () => {
+  const csv = async () => {
     const blob = new Blob([store.historyCsv()], { type: 'text/csv' });
+    /* On iOS a download link does nothing useful; the share sheet does. */
+    try {
+      const file = new File([blob], 'whooptimer-history.csv', { type: 'text/csv' });
+      if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+    } catch (e) { if (e?.name === 'AbortError') return; }
     const url = URL.createObjectURL(blob);
     const a = h('a', { href: url, download: 'whooptimer-history.csv' });
     document.body.appendChild(a); a.click(); a.remove();

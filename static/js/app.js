@@ -86,8 +86,8 @@ class App {
     this.render();
     this.loop();
     if (this.restored) {
-      toast('Race restored after the reload. Reconnect the timer to keep timing from the gate; ' +
-            'laps by hand count meanwhile.', 'ok', 10000);
+      toast('Race restored after the reload. Power-cycle the timer and reconnect to keep timing ' +
+            'from the gate; laps by hand count meanwhile.', 'ok', 10000);
     }
     /* Another tab of this app writing settings must not be overwritten by this
      * one's stale copy on its next save. */
@@ -125,7 +125,9 @@ class App {
     });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && this.race.state === 'running') this.wake.request();
+      if (document.visibilityState === 'hidden') this.checkpoint();
     });
+    addEventListener('pagehide', () => this.checkpoint());
 
     /* Silently re-attach to a timer this browser already has permission for, so
      * a returning pilot lands on the flying screen and not on a chooser. If
@@ -517,7 +519,16 @@ class App {
     this.voice.arm();
     this.sessionBest = null;
     this.lastLap = null;
-    if (this.prefs.keepAwake) this.wake.request();
+    if (this.prefs.keepAwake) {
+      this.wake.request().then(ok => {
+        /* Silence here means the screen locks mid-race and, on a phone, the
+         * Bluetooth link goes with it. Say so once. */
+        if (!ok && !this._wakeWarned) {
+          this._wakeWarned = true;
+          toast('This browser cannot keep the screen awake — set auto-lock to Never while racing.', 'err', 9000);
+        }
+      });
+    }
     /* Put the timer into the state this race assumes before the clock starts —
      * channels, enables and the timer's own minimum lap. Config writes are
      * refused once staging begins, so this has to happen now. */

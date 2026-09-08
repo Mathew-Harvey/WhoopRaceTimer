@@ -169,7 +169,7 @@ kbd{display:inline-block;background:var(--surface-3);border:1px solid var(--edge
   border-bottom-width:2px;border-radius:5px;padding:1px 6px;font:600 var(--t-13)/1.5 var(--font-num)}
 
 /* --------------------------------------------------------------- app shell -- */
-.app{height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+.app{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 
 .topbar{
   display:flex;align-items:center;gap:var(--s2);
@@ -186,11 +186,11 @@ kbd{display:inline-block;background:var(--surface-3);border:1px solid var(--edge
   color:var(--fg-2);font-size:var(--t-13);font-weight:650;white-space:nowrap;
   min-height:34px}
 .pill .dot{width:8px;height:8px;border-radius:99px;background:var(--fg-3);flex:none}
-.pill[data-tone=ok]{color:var(--state-green);border-color:color-mix(in srgb,var(--state-green) 40%,transparent)}
-.pill[data-tone=ok] .dot{background:var(--state-green);box-shadow:0 0 0 3px color-mix(in srgb,var(--state-green) 22%,transparent)}
-.pill[data-tone=warn]{color:var(--state-amber);border-color:color-mix(in srgb,var(--state-amber) 40%,transparent)}
+.pill[data-tone=ok]{color:var(--state-green);border-color:var(--state-green);border-color:color-mix(in srgb,var(--state-green) 40%,transparent)}
+.pill[data-tone=ok] .dot{background:var(--state-green);box-shadow:0 0 0 3px var(--state-green);box-shadow:0 0 0 3px color-mix(in srgb,var(--state-green) 22%,transparent)}
+.pill[data-tone=warn]{color:var(--state-amber);border-color:var(--state-amber);border-color:color-mix(in srgb,var(--state-amber) 40%,transparent)}
 .pill[data-tone=warn] .dot{background:var(--state-amber)}
-.pill[data-tone=bad]{color:var(--state-red);border-color:color-mix(in srgb,var(--state-red) 45%,transparent)}
+.pill[data-tone=bad]{color:var(--state-red);border-color:var(--state-red);border-color:color-mix(in srgb,var(--state-red) 45%,transparent)}
 .pill[data-tone=bad] .dot{background:var(--state-red)}
 button.pill{cursor:pointer}
 
@@ -250,12 +250,12 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 
 .note{border-radius:var(--r2);padding:var(--s3) var(--s4);font-size:var(--t-15);
   border:1px solid var(--line);background:var(--surface-2);color:var(--fg-2)}
-.note[data-tone=warn]{border-color:color-mix(in srgb,var(--state-amber) 45%,transparent);
-  background:color-mix(in srgb,var(--state-amber) 11%,var(--surface-1));color:var(--fg)}
-.note[data-tone=bad]{border-color:color-mix(in srgb,var(--state-red) 50%,transparent);
-  background:color-mix(in srgb,var(--state-red) 11%,var(--surface-1));color:var(--fg)}
-.note[data-tone=ok]{border-color:color-mix(in srgb,var(--state-green) 40%,transparent);
-  background:color-mix(in srgb,var(--state-green) 10%,var(--surface-1));color:var(--fg)}
+.note[data-tone=warn]{border-color:var(--state-amber);border-color:color-mix(in srgb,var(--state-amber) 45%,transparent);
+  background:var(--surface-1);background:color-mix(in srgb,var(--state-amber) 11%,var(--surface-1));color:var(--fg)}
+.note[data-tone=bad]{border-color:var(--state-red);border-color:color-mix(in srgb,var(--state-red) 50%,transparent);
+  background:var(--surface-1);background:color-mix(in srgb,var(--state-red) 11%,var(--surface-1));color:var(--fg)}
+.note[data-tone=ok]{border-color:var(--state-green);border-color:color-mix(in srgb,var(--state-green) 40%,transparent);
+  background:var(--surface-1);background:color-mix(in srgb,var(--state-green) 10%,var(--surface-1));color:var(--fg)}
 .note strong{display:block;margin-bottom:2px}
 .note .act{margin-top:var(--s2)}
 
@@ -286,19 +286,19 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 .coach{
   display:flex;align-items:center;gap:var(--s3);
   padding:var(--s3) var(--s4);border-radius:var(--r2);
-  background:color-mix(in srgb,var(--info) 12%,var(--surface-1));
+  background:var(--surface-1);background:color-mix(in srgb,var(--info) 12%,var(--surface-1));
   border:1px solid color-mix(in srgb,var(--info) 34%,transparent);
   font-size:var(--t-15);font-weight:600}
 .coach .k{flex:none;width:22px;height:22px;border-radius:99px;display:grid;place-items:center;
   background:var(--info);color:#04101f;font-weight:900;font-size:11px}
-.coach[data-tone=warn]{background:color-mix(in srgb,var(--state-amber) 13%,var(--surface-1));
-  border-color:color-mix(in srgb,var(--state-amber) 42%,transparent)}
+.coach[data-tone=warn]{background:var(--surface-1);background:color-mix(in srgb,var(--state-amber) 13%,var(--surface-1));
+  border-color:var(--state-amber);border-color:color-mix(in srgb,var(--state-amber) 42%,transparent)}
 .coach[data-tone=warn] .k{background:var(--state-amber);color:var(--on-id)}
-.coach[data-tone=bad]{background:color-mix(in srgb,var(--state-red) 13%,var(--surface-1));
-  border-color:color-mix(in srgb,var(--state-red) 46%,transparent)}
+.coach[data-tone=bad]{background:var(--surface-1);background:color-mix(in srgb,var(--state-red) 13%,var(--surface-1));
+  border-color:var(--state-red);border-color:color-mix(in srgb,var(--state-red) 46%,transparent)}
 .coach[data-tone=bad] .k{background:var(--state-red);color:#2a0508}
-.coach[data-tone=ok]{background:color-mix(in srgb,var(--state-green) 11%,var(--surface-1));
-  border-color:color-mix(in srgb,var(--state-green) 36%,transparent)}
+.coach[data-tone=ok]{background:var(--surface-1);background:color-mix(in srgb,var(--state-green) 11%,var(--surface-1));
+  border-color:var(--state-green);border-color:color-mix(in srgb,var(--state-green) 36%,transparent)}
 .coach[data-tone=ok] .k{background:var(--state-green);color:var(--on-go)}
 .coach .text{flex:1}
 .coach button{margin:-4px 0;min-height:36px;padding:6px 12px;font-size:var(--t-13)}
@@ -336,8 +336,8 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 /* Broadcast timing convention: the fraction sits smaller than the whole
    seconds, so the digit that matters is the one you read first. */
 .hero-lap .big .dec{font-size:.56em;color:var(--fg-2);letter-spacing:-.02em}
-.hero-lap .big[data-tone=purple] .dec{color:color-mix(in srgb,var(--t-purple) 78%,var(--fg-3))}
-.hero-lap .big[data-tone=green] .dec{color:color-mix(in srgb,var(--t-green) 78%,var(--fg-3))}
+.hero-lap .big[data-tone=purple] .dec{color:var(--t-purple);color:color-mix(in srgb,var(--t-purple) 78%,var(--fg-3))}
+.hero-lap .big[data-tone=green] .dec{color:var(--t-green);color:color-mix(in srgb,var(--t-green) 78%,var(--fg-3))}
 .hero-lap .big[data-tone=purple]{color:var(--t-purple)}
 .hero-lap .big[data-tone=green]{color:var(--t-green)}
 .hero-lap .big[data-tone=idle]{color:var(--t-none)}
@@ -422,7 +422,7 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 .trow .times .v[data-tone=green]{color:var(--t-green)}
 .trow .times .v[data-tone=none]{color:var(--t-none)}
 .trow.hit{animation:rowhit 700ms var(--ease)}
-@keyframes rowhit{0%{border-color:var(--state-green);background:color-mix(in srgb,var(--state-green) 14%,var(--surface-1))}
+@keyframes rowhit{0%{border-color:var(--state-green);background:var(--surface-1);background:color-mix(in srgb,var(--state-green) 14%,var(--surface-1))}
                   100%{border-color:var(--line-subtle);background:var(--surface-1)}}
 
 /* ---------------------------------------------------------- pilots / setup -- */
@@ -439,7 +439,7 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
   padding:0;position:relative;flex:none;min-height:32px}
 .toggle .pip{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:99px;
   background:var(--fg-3);transition:transform var(--dur) var(--ease),background var(--dur) var(--ease)}
-.toggle[aria-pressed=true]{background:color-mix(in srgb,var(--state-green) 40%,var(--surface-3));
+.toggle[aria-pressed=true]{background:var(--surface-3);background:color-mix(in srgb,var(--state-green) 40%,var(--surface-3));
   border-color:var(--state-green)}
 .toggle[aria-pressed=true] .pip{transform:translateX(24px);background:var(--state-green)}
 
@@ -466,11 +466,11 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
   padding:var(--s3) var(--s4);border-radius:var(--r2);background:var(--surface-1);
   border:1px dashed var(--line);color:var(--fg-3)}
 .verdict{display:grid;gap:2px;padding:var(--s3);border-radius:var(--r1);font-size:var(--t-15)}
-.verdict[data-level=fatal]{background:color-mix(in srgb,var(--state-red) 14%,var(--surface-1));
+.verdict[data-level=fatal]{background:var(--surface-1);background:color-mix(in srgb,var(--state-red) 14%,var(--surface-1));
   border:1px solid color-mix(in srgb,var(--state-red) 50%,transparent)}
-.verdict[data-level=bad],.verdict[data-level=warn]{background:color-mix(in srgb,var(--state-amber) 12%,var(--surface-1));
+.verdict[data-level=bad],.verdict[data-level=warn]{background:var(--surface-1);background:color-mix(in srgb,var(--state-amber) 12%,var(--surface-1));
   border:1px solid color-mix(in srgb,var(--state-amber) 44%,transparent)}
-.verdict[data-level=good]{background:color-mix(in srgb,var(--state-green) 10%,var(--surface-1));
+.verdict[data-level=good]{background:var(--surface-1);background:color-mix(in srgb,var(--state-green) 10%,var(--surface-1));
   border:1px solid color-mix(in srgb,var(--state-green) 34%,transparent)}
 .verdict[data-level=untuned],.verdict[data-level=unknown],.verdict[data-level=off]{
   background:var(--surface-2);border:1px solid var(--line)}
@@ -490,7 +490,7 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 
 /* ---------------------------------------------------------------- overlays -- */
 .ov{position:fixed;inset:0;z-index:80;display:grid;place-items:center;
-  background:rgb(3 5 8 / .93);backdrop-filter:blur(3px);padding:var(--s4)}
+  background:rgb(3 5 8 / .93);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);padding:var(--s4)}
 .ov .cd{font-family:var(--font-num);font-size:var(--t-countdown);font-weight:800;
   color:var(--state-amber);line-height:.85}
 .ov .goword{font-family:var(--font-num);font-size:var(--t-go);font-weight:900;color:var(--state-green)}
@@ -501,14 +501,14 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 .sheet .panel{width:100%;max-width:620px;background:var(--surface-1);
   border:1px solid var(--line);border-bottom:none;
   border-radius:var(--r4) var(--r4) 0 0;padding:var(--s4) var(--s4) calc(var(--s5) + var(--safe-b));
-  max-height:88dvh;overflow:auto;animation:sheetin var(--dur) var(--ease)}
+  max-height:88vh;max-height:88dvh;overflow:auto;animation:sheetin var(--dur) var(--ease)}
 @keyframes sheetin{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
 .sheet .grip{width:40px;height:4px;border-radius:99px;background:var(--line);margin:0 auto var(--s3)}
 .sheet h2{margin-bottom:var(--s3)}
 @media (min-width:700px){
   .sheet{align-items:center}
   .sheet .panel{border-radius:var(--r4);border-bottom:1px solid var(--line);
-    padding-bottom:var(--s5);max-height:84dvh}
+    padding-bottom:var(--s5);max-height:84vh;max-height:84dvh}
 }
 
 .results{display:grid;gap:var(--s2)}
@@ -529,8 +529,8 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 .toast{background:var(--surface-3);border:1px solid var(--edge);border-radius:var(--r2);
   padding:12px 16px;box-shadow:var(--shadow-2);transition:opacity var(--dur) var(--ease);
   font-size:var(--t-15)}
-.toast.err{border-color:var(--state-red);background:color-mix(in srgb,var(--state-red) 20%,var(--surface-3))}
-.toast.ok{border-color:var(--state-green);background:color-mix(in srgb,var(--state-green) 18%,var(--surface-3))}
+.toast.err{border-color:var(--state-red);background:var(--surface-3);background:color-mix(in srgb,var(--state-red) 20%,var(--surface-3))}
+.toast.ok{border-color:var(--state-green);background:var(--surface-3);background:color-mix(in srgb,var(--state-green) 18%,var(--surface-3))}
 
 /* ------------------------------------------------------------------ misc -- */
 .kbdhelp{display:grid;gap:6px;font-size:var(--t-15)}
@@ -541,7 +541,7 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 .lapchips{display:flex;flex-wrap:wrap;gap:5px}
 .lapchip{font-family:var(--font-num);font-size:var(--t-13);padding:3px 8px;border-radius:6px;
   background:var(--surface-3);color:var(--fg-2)}
-.lapchip[data-best]{background:color-mix(in srgb,var(--t-purple) 26%,var(--surface-3));color:var(--fg)}
+.lapchip[data-best]{background:var(--surface-3);background:color-mix(in srgb,var(--t-purple) 26%,var(--surface-3));color:var(--fg)}
 
 @media (max-width:560px){
   .band{grid-template-columns:auto 1fr;gap:var(--s2);padding:var(--s2) var(--s3)}

@@ -32,8 +32,12 @@ export class Voice {
   get voice() {
     const named = this.voices.find(v => v.name === this.prefs.voiceName);
     if (named) return named;
-    return this.voices.find(v => /en[-_]?(GB|AU|US|NZ)/i.test(v.lang)) ||
-           this.voices.find(v => /^en/i.test(v.lang)) || this.voices[0] || null;
+    /* A track has no internet. Chrome's default English voices are network
+     * voices that simply say nothing offline, so a voice that lives on the
+     * device wins over a nicer one that does not. */
+    const en = this.voices.filter(v => /^en/i.test(v.lang));
+    const rank = v => (v.localService ? 0 : 2) + (/en[-_]?(GB|AU|US|NZ)/i.test(v.lang) ? 0 : 1);
+    return en.sort((a, b) => rank(a) - rank(b))[0] || this.voices[0] || null;
   }
 
   /* Browsers refuse to speak before a gesture, so the first tap primes it.
@@ -56,6 +60,13 @@ export class Voice {
       if (v) u.voice = v;
       u.rate = Number(this.prefs.rate) || 1.1;
       u.onstart = () => { if (!this.spoken) { this.spoken = true; this.onChange(); } };
+      u.onerror = e => {
+        /* A network voice with no network fails here, not at getVoices(). */
+        if (e.error === 'network' || e.error === 'synthesis-failed' || e.error === 'synthesis-unavailable') {
+          this.lastError = e.error;
+          this.onChange();
+        }
+      };
       speechSynthesis.speak(u);
     } catch (e) { this.available = false; this.onChange(); }
   }

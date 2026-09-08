@@ -567,11 +567,18 @@ export function capabilities() {
   } else if (!bluetooth && b.safari) {
     advice = 'Safari has no Web Bluetooth. Use Chrome or Edge, or run WhoopTimer on ' +
              'this machine and let it hold the link.';
+  } else if (!bluetooth && b.chromium && /Linux/.test(navigator.userAgent) && !b.android) {
+    advice = 'Chrome on Linux only offers Bluetooth to web pages when the system BlueZ stack is ' +
+             'available, and on some builds only behind chrome://flags/#enable-experimental-web-platform-features. ' +
+             'Try that, or run WhoopTimer on this machine and let it hold the link.';
   } else if (!bluetooth) {
     advice = 'This browser has no Web Bluetooth. Chrome and Edge do, on desktop and ' +
              'on Android.';
   }
   return { bluetooth, serial, secure, ...b, advice,
+           /* No service worker means no offline copy — Bluefy (WKWebView) is the
+            * main case, and it is also the main iOS path. */
+           offlineCapable: 'serviceWorker' in navigator,
            /* Web Serial is desktop-only; on a phone the USB option is a dead end. */
            serialLikely: serial && !b.android && !b.iOS };
 }
@@ -579,9 +586,15 @@ export function capabilities() {
 /** Is a WhoopTimer bridge running on this machine? */
 export async function probeBridge(base = '') {
   try {
-    const r = await fetch(base.replace(/\/$/, '') + '/bridge/status',
-                          { cache: 'no-store', signal: AbortSignal.timeout(1200) });
-    if (!r.ok) return null;
-    return await r.json();
+    /* AbortSignal.timeout() is newer than the browsers that most need the
+     * bridge (older Safari, Firefox); build the timeout by hand. */
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 1200);
+    try {
+      const r = await fetch(base.replace(/\/$/, '') + '/bridge/status',
+                            { cache: 'no-store', signal: ctl.signal });
+      if (!r.ok) return null;
+      return await r.json();
+    } finally { clearTimeout(t); }
   } catch (e) { return null; }
 }

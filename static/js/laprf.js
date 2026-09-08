@@ -222,7 +222,7 @@ function readLE(dv, off, typ, size) {
     case U16: return dv.getUint16(off, true);
     case U32: return dv.getUint32(off, true);
     case F32: return dv.getFloat32(off, true);
-    case U64: return Number(dv.getBigUint64(off, true));
+    case U64: return readInt(dv, off, 8);     // no BigInt: older WebKit lacks getBigUint64, and Number is the target anyway
     default: return readInt(dv, off, size);
   }
 }

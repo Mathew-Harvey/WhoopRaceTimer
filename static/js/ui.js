@@ -131,7 +131,11 @@ export function sheet(title, build, { onClose } = {}) {
   document.body.appendChild(host);
   document.addEventListener('keydown', esc);
   openSheet = { host, close };
-  panel.querySelector('input,select,button:not(.quiet)')?.focus({ preventScroll: true });
+  /* On a phone, focusing an input raises the keyboard over the sheet before
+   * anyone has read it. Only buttons get focus there. */
+  const coarse = matchMedia('(pointer:coarse)').matches;
+  panel.querySelector(coarse ? 'button:not(.quiet)' : 'input,select,button:not(.quiet)')
+       ?.focus({ preventScroll: true });
   return close;
 }
 

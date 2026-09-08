@@ -16,3 +16,4 @@ jobs:
         with:
           node-version: '20'
       - run: python3 tests/test_protocol_parity.py
+      - run: node tests/test_race_engine.mjs

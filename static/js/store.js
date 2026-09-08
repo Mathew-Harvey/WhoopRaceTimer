@@ -50,10 +50,13 @@ export const DEFAULT_PREFS = {
 export function settings() { return { ...DEFAULT_SETTINGS, ...load('settings', {}) }; }
 export function prefs() { return { ...DEFAULT_PREFS, ...load('prefs', {}) }; }
 
+/** Save a finished session. A race that ended, had its last lap undone and
+ *  ended again is one race, not two: an entry with the same runId is replaced. */
 export function appendHistory(entry, cap = 200) {
   const h = load('history', []);
   entry.savedAt = Date.now() / 1000;
-  h.push(entry);
+  const i = entry.runId ? h.findIndex(e => e.runId === entry.runId) : -1;
+  if (i >= 0) h[i] = entry; else h.push(entry);
   return save('history', h.slice(-cap));
 }
 

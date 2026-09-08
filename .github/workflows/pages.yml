@@ -27,6 +27,13 @@ jobs:
       # GitHub Actions. The workflow token is not allowed to create the site
       # itself, and configure-pages says so plainly when it has not been done.
       - uses: actions/configure-pages@v5
+      # Every deploy gets its own service-worker cache version. Without this
+      # the worker's install step — which is what precaches the app — runs only
+      # once per byte-change of sw.js, and files added in later deploys are never
+      # cached for offline use. The stamp is the commit, so it changes exactly
+      # when the app does.
+      - name: Stamp the service worker with this commit
+        run: sed -i "s/const VERSION = 'wt-[^']*'/const VERSION = 'wt-${GITHUB_SHA::10}'/" static/sw.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: static

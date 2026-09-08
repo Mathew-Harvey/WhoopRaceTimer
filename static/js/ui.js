@@ -116,7 +116,7 @@ export function sheet(title, build, { onClose } = {}) {
   const panel = h('div.panel', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title });
   const host = h('div.sheet', { onclick: e => { if (e.target === host) close(); } }, panel);
   const close = () => {
-    if (openSheet !== host) return;
+    if (openSheet?.host !== host) return;
     host.remove(); openSheet = null;
     document.removeEventListener('keydown', esc);
     onClose?.();
@@ -130,13 +130,16 @@ export function sheet(title, build, { onClose } = {}) {
     build(close));
   document.body.appendChild(host);
   document.addEventListener('keydown', esc);
-  openSheet = host;
+  openSheet = { host, close };
   panel.querySelector('input,select,button:not(.quiet)')?.focus({ preventScroll: true });
   return close;
 }
 
+/** Close whatever sheet is open through its own closer, so its Escape listener
+ *  goes with it and its onClose runs — a scan started from a sheet must stop
+ *  when the sheet is closed from anywhere. */
 export function closeSheet() {
-  if (openSheet) { openSheet.remove(); openSheet = null; }
+  openSheet?.close();
 }
 
 export const sheetOpen = () => !!openSheet;

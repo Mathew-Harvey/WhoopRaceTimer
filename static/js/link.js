@@ -43,7 +43,16 @@ export class LapRFLink {
   }
 
   on(evt, fn) { (this._handlers[evt] ||= []).push(fn); return this; }
-  emit(evt, arg) { for (const fn of this._handlers[evt] || []) { try { fn(arg); } catch (e) { console.error(e); } } }
+  emit(evt, arg) {
+    if (this._dead) return;
+    for (const fn of this._handlers[evt] || []) { try { fn(arg); } catch (e) { console.error(e); } }
+  }
+
+  /** Retire this link: nothing it hears from now on reaches the app. A replaced
+   *  link keeps receiving notifications for as long as the browser holds the
+   *  underlying device, and two links reporting the same timer means every
+   *  reading arrives twice and a dropped old link toasts about a working new one. */
+  detach() { this._dead = true; this._handlers = {}; }
   log(msg) { this.emit('log', msg); }
 
   /** True once config writes will actually reach the timer. */
@@ -79,11 +88,18 @@ export class LapRFLink {
     merged.set(this._buf); merged.set(chunk, this._buf.length);
     const { records, rest } = laprf.splitRecords(merged);
     this._buf = rest.length > 4096 ? rest.slice(rest.length - 1024) : rest;
-    if (records.length && this.mode !== 'binary') this.setState({ mode: 'binary' });
+    /* SOR is 0x5A, which is also a capital Z, and EOR is 0x5B, a '['. Console
+     * text can contain both, so a framed span is only evidence of the binary
+     * protocol once its CRC checks out — flipping on a bogus frame would stop
+     * the ASCII parser for good. */
+    let proven = false;
     for (const r of records) {
       const rec = laprf.decodeRecord(r);
-      if (rec) this.emit('record', rec);
+      if (!rec) continue;
+      if (rec.type !== 'crc_error') proven = true;
+      this.emit('record', rec);
     }
+    if (proven && this.mode !== 'binary') this.setState({ mode: 'binary' });
   }
 
   /** Say hello: ask the timer to describe every slot and its clock. */
@@ -100,7 +116,9 @@ export class BleLink extends LapRFLink {
     super('bluetooth');
     this.device = null;
     this.ctrl = null;
+    this._stream = null;
     this._onDisc = () => this._dropped();
+    this._onValue = e => this.ingest(new Uint8Array(e.target.value.buffer));
   }
 
   /**
@@ -131,19 +149,31 @@ export class BleLink extends LapRFLink {
     return false;
   }
 
+  /** Reconnect to the timer this link already knows, with no chooser. After a
+   *  power-cycle this is the one-tap path back into a running race. */
+  async reconnect() {
+    if (!this.device) throw new Error('no timer to reconnect to');
+    return this._attach(this.device);
+  }
+
   async _attach(device) {
     this.device = device;
     this.deviceName = device.name || 'LapRF';
     this.log(`connecting to ${this.deviceName}…`);
+    /* Chrome hands back the same device and characteristic objects every time,
+     * so listeners must be removed before being added or a reconnect doubles
+     * every notification. */
     device.removeEventListener('gattserverdisconnected', this._onDisc);
     device.addEventListener('gattserverdisconnected', this._onDisc);
     const server = await device.gatt.connect();
     const svc = await server.getPrimaryService(NUS_SERVICE);
     this.ctrl = await svc.getCharacteristic(NUS_CONTROL);
     const stream = await svc.getCharacteristic(NUS_STREAM);
+    this._stream?.removeEventListener('characteristicvaluechanged', this._onValue);
+    stream.removeEventListener('characteristicvaluechanged', this._onValue);
     await stream.startNotifications();
-    stream.addEventListener('characteristicvaluechanged', e =>
-      this.ingest(new Uint8Array(e.target.value.buffer)));
+    stream.addEventListener('characteristicvaluechanged', this._onValue);
+    this._stream = stream;
     this._buf = new Uint8Array(0);
     this.setState({ connected: true, mode: 'binary', detail: this.deviceName });
     this.log('connected');
@@ -167,8 +197,14 @@ export class BleLink extends LapRFLink {
     this.emit('lost');
   }
 
-  async disconnect() {
+  detach() {
     try { this.device?.removeEventListener('gattserverdisconnected', this._onDisc); } catch (e) {}
+    try { this._stream?.removeEventListener('characteristicvaluechanged', this._onValue); } catch (e) {}
+    super.detach();
+  }
+
+  async disconnect() {
+    this.detach();
     try { if (this.device?.gatt?.connected) this.device.gatt.disconnect(); } catch (e) {}
     this.setState({ connected: false, mode: 'disconnected' });
   }
@@ -268,7 +304,12 @@ export class SerialLink extends LapRFLink {
     } finally {
       try { this._reader?.releaseLock(); } catch (e) {}
       if (this.connected) {
+        /* Unplanned exit (unplugged, or the OS revoked the port). Release our
+         * locks and close the port, or the browser keeps it marked open and the
+         * next connect attempt fails with "already open". */
         this.setState({ connected: false, mode: 'disconnected' });
+        try { this._writer?.releaseLock(); } catch (e) {}
+        try { await this.port?.close(); } catch (e) {}
         this.emit('lost');
       }
     }
@@ -328,9 +369,19 @@ export class BridgeLink extends LapRFLink {
         clearTimeout(giveUp);
         reject(new Error('could not open the local bridge stream'));
       };
-    });
+    }).catch(err => { try { this._es.close(); } catch (e) {} this._es = null; throw err; });
+    /* EventSource reconnects on its own after a blip. Anything half-received
+     * before the drop is garbage now, and the timer should be asked to describe
+     * itself again in case it was power-cycled meanwhile. */
     this._es.onerror = () => {
       if (this.connected) { this.setState({ connected: false, mode: 'disconnected' }); this.emit('lost'); }
+    };
+    this._es.onopen = () => {
+      if (this.connected) return;
+      this._buf = new Uint8Array(0);
+      this._text = '';
+      this.setState({ connected: true, mode: 'ascii' });
+      this.hello();
     };
 
     this.setState({ connected: true, mode: info.mode || 'binary',
@@ -445,7 +496,7 @@ export class DemoLink extends LapRFLink {
      * real thing. A query asks for all eight slots; only four are fitted. */
     const { records } = laprf.splitRecords(msg.slice());
     for (const r of records) {
-      const rec = laprf.decodeRecord(laprf.unescape(r));
+      const rec = laprf.decodeRecord(r);       // splitRecords has already unescaped
       if (!rec || rec.type !== 'rfSetup' || !this._rf[rec.slot]) continue;
       if (rec.frequency) Object.assign(this._rf[rec.slot], rec);
       setTimeout(() => this._emitRf(rec.slot), 30);

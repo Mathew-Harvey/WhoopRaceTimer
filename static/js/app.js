@@ -15,7 +15,7 @@ import * as tuning from './tuning.js';
 import { Race } from './race.js';
 import { BleLink, SerialLink, BridgeLink, DemoLink, capabilities, probeBridge } from './link.js';
 import { Voice, Wake } from './speech.js';
-import { toast, mount, closeSheet, sheetOpen } from './ui.js';
+import { toast, mount, closeSheet, sheetOpen, confirmSheet } from './ui.js';
 import { SCREENS } from './screens.js';
 
 export const SLOTS = [1, 2, 3, 4];
@@ -35,12 +35,18 @@ class App {
     this.bridge = null;             // probe result for a local WhoopTimer
 
     this.timer = { battery: null, lastRx: 0, rfSetup: {} };
-    this.rf = store.load('rf', {}); // slot -> {gain, threshold, floor, ceiling}
+    this.rf = store.load('rf', {}); // slot -> {gain, threshold, floor, ceiling} — measured or user-set only
+    /* Slots whose channel the user has chosen here. Everything else is the
+     * timer's business: the app mirrors what it reports and never writes a
+     * default over it. Saving all four pilots' defaults as "intent" is exactly
+     * how a club's race frequencies got overwritten on first connect. */
+    this.touched = store.load('pilotsTouched', {});
     this.sig = new tuning.SignalBank(SLOTS);
     this.cal = new tuning.Calibration();
     this.cal.preset = this.settings.preset;
 
     this.mode = store.load('mode', null);       // 'solo' | 'race' | null
+    this._attempt = 0;                          // connect attempts; a stale one may not adopt
     this.screen = 'connect';
     this.view = null;
     this.lastLap = null;            // {slot, n, time, isPb, at} for the hero flash
@@ -75,7 +81,9 @@ class App {
     for (const ev of ['pointerup', 'pointercancel']) {
       addEventListener(ev, () => {
         this._pointerDown = false;
-        if (this._deferredRender) this._flushRender();
+        /* click is dispatched after pointerup within the same task, so a
+         * rebuild here would still land under the finger. Defer past it. */
+        if (this._deferredRender) setTimeout(() => this._flushRender(), 60);
       }, true);
     }
     /* Only a change of breakpoint matters — labels and layout branch on it. A
@@ -93,16 +101,26 @@ class App {
     });
 
     /* Silently re-attach to a timer this browser already has permission for, so
-     * a returning pilot lands on the flying screen and not on a chooser. */
+     * a returning pilot lands on the flying screen and not on a chooser. If
+     * the pilot taps a connect button before this finishes, theirs wins: a
+     * second link to the same timer would double every reading. */
     probeBridge().then(b => { if (b?.available) { this.bridge = b; this.markStructural(); } });
+    this._autoConnect = true;
     for (const kind of ['bluetooth', 'usb']) {
+      if (!this._autoConnect) break;
       if (kind === 'bluetooth' && !this.caps.bluetooth) continue;
       if (kind === 'usb' && !this.caps.serial) continue;
       const link = this.makeLink(kind);
       let ok = false;
       try { ok = await link.reconnectKnown(); } catch (e) { ok = false; }
-      if (ok) { this.adoptLink(link, kind); return; }
+      if (!this._autoConnect || this.link) {          // a manual connect happened meanwhile
+        link.detach();
+        if (ok) link.disconnect().catch(() => {});
+        break;
+      }
+      if (ok) { this.adoptLink(link, kind); break; }
     }
+    this._autoConnect = false;
   }
 
   loop() {
@@ -115,27 +133,84 @@ class App {
       requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
+    /* requestAnimationFrame stops entirely while a tab is in the background,
+     * so a timed race's end and the start countdown would wait for the pilot
+     * to look back at the screen. A timer keeps running there, just slower. */
+    setInterval(() => this.race.tick(), 250);
   }
 
   /* ------------------------------------------------------------------ link -- */
   async connect(kind, opts = {}) {
     if (this.connecting) return;
+    this._autoConnect = false;
     this.connectingKind = kind;
     this.connecting = { bluetooth: 'Looking for your timer…', usb: 'Opening the USB port…',
                         bridge: 'Talking to WhoopTimer on this machine…',
                         demo: 'Starting the demo timer…' }[kind] || 'Connecting…';
     this.connectError = null;
     this.render();
+    const attempt = ++this._attempt;
     const link = this.makeLink(kind);
     try {
       await link.connect(opts);
+      if (this._attempt !== attempt) {
+        /* Cancelled, or superseded by another connect while the chooser was
+         * open. Whatever this attempt got hold of must not take over. */
+        link.detach();
+        if (link.connected) link.disconnect().catch(() => {});
+        return;
+      }
       this.connecting = null;
       this.adoptLink(link, kind);
     } catch (err) {
+      link.detach();
+      if (this._attempt !== attempt) return;
       this.connecting = null;
       this.connectError = describeConnectError(err, kind);
+      /* The connect screen shows the error; anywhere else (a coach button
+       * during a session) it would vanish silently. */
+      if (this.link) toast(`${this.connectError.title}. ${this.connectError.body}`, 'err', 8000);
       this.render();
     }
+  }
+
+  cancelConnect() {
+    this._attempt = (this._attempt || 0) + 1;
+    this.connecting = null;
+    this.render();
+  }
+
+  /**
+   * Get the same timer back after a dropout. For Bluetooth this reuses the
+   * device the browser already granted, so after a power-cycle it is one tap
+   * and no chooser; anything else goes through a normal connect.
+   */
+  async reconnect() {
+    if (this.connecting) return;
+    const link = this.link, kind = this.linkKind;
+    if (kind === 'bluetooth' && link?.device) {
+      this.connecting = `Reconnecting to ${link.deviceName}…`;
+      this.connectError = null;
+      this.markStructural();
+      try {
+        await link.reconnect();
+        this.connecting = null;
+        this.markStructural();
+        return;
+      } catch (err) {
+        this.connecting = null;
+        this.connectError = describeConnectError(err, kind);
+      }
+    }
+    if (kind === 'usb' && link?.reconnectKnown) {
+      this.connecting = 'Reopening the USB port…';
+      this.markStructural();
+      let ok = false;
+      try { ok = await link.reconnectKnown(); } catch (e) { ok = false; }
+      this.connecting = null;
+      if (ok) { this.markStructural(); return; }
+    }
+    return this.connect(kind || 'bluetooth');
   }
 
   /**
@@ -159,9 +234,23 @@ class App {
   }
 
   adoptLink(link, kind) {
+    const old = this.link;
+    if (old && old !== link) {
+      /* One link at a time. A demo left running under a real timer feeds fake
+       * peaks into the tuning wizard; a dropped link left wired toasts about a
+       * connection that is fine. The one case not to close is the same
+       * Bluetooth device reached twice — that GATT connection is the new link's. */
+      old.detach();
+      const sameDevice = old.kind === 'bluetooth' && link.kind === 'bluetooth' && old.device === link.device;
+      if (old.connected && !sameDevice) old.disconnect().catch(() => {});
+    }
     this.link = link;
     this.linkKind = kind;
     this.connectError = null;
+    /* What the previous timer reported is not what this one holds. In
+     * particular the demo's 1600 must never be mistaken for a real unit's
+     * threshold. */
+    this.timer = { battery: null, lastRx: 0, rfSetup: {} };
     /* Nothing is written to the timer just because we connected. The link's
      * hello() asks it to describe itself; adoptRfSetup() then corrects only the
      * slots where our saved intent actually differs. Writing on connect is how
@@ -180,6 +269,7 @@ class App {
 
   async disconnect() {
     try { await this.link?.disconnect(); } catch (e) {}
+    this.link?.detach();
     this.link = null; this.linkKind = null;
     this.screen = 'connect';
     this.render();
@@ -193,7 +283,7 @@ class App {
     this.timer.lastRx = Date.now();
     switch (rec.type) {
       case 'passing':
-        if (rec.slot) this.race.onPassing(rec.slot);
+        if (rec.slot) this.race.onPassing(rec.slot, undefined, rec.rtcTime ?? null);
         break;
       case 'status':
         if (rec.batteryVoltage) {
@@ -218,46 +308,40 @@ class App {
       this.sig.add(slot, val);
       this.cal.feed(slot, val);
     }
-    /* Software fallback detection, for a unit whose gate never fires. */
-    if (this.sig.autoDetect) for (const s of this.sig.checkAll()) this.race.onPassing(s);
   }
 
   /** Mirror what the hardware says about itself; never invent a default. */
   adoptRfSetup(rec) {
     const slot = rec.slot;
+    /* The timer's own values live here and only here. Threshold and gain are
+     * not copied into this.rf: that store holds what was measured or chosen in
+     * this app, and a value merely seen on some timer (the demo's, say) must
+     * never be written back to a different one as if it were intent. */
     this.timer.rfSetup[slot] = {
       band: rec.band, channel: rec.channel, frequency: rec.frequency,
       gain: rec.gain, threshold: rec.threshold, enabled: !!rec.enabled,
     };
-    const cur = (this.rf[slot] ||= {});
-    if (cur.gain == null) cur.gain = rec.gain ?? 58;
-    if (cur.threshold == null) cur.threshold = rec.threshold ?? 1600;
-    store.save('rf', this.rf);
-
-    /* Adopt the timer's actual frequency into the pilot, but only when we have
-     * never been told otherwise — the app must not push a default channel over
-     * a real race frequency. */
-    const saved = store.load('pilots', {});
     const p = this.race.pilots.get(slot);
     if (!p || !rec.frequency) return;
     const mine = laprf.channelByName(p.channel).frequency;
+    const wantEnabled = p.enabled;
 
-    if (!saved[slot]) {
-      /* Never configured here: take the hardware's word for it. Several
-       * band/channel pairs share a frequency (R7 and F8 are both 5880), so only
-       * adopt when the frequency genuinely differs — otherwise the pilot's
-       * channel gets silently renamed to a synonym they never chose. */
-      const match = laprf.channelsByFreq(rec.frequency)[0];
-      if (mine !== rec.frequency && match) {
-        this.race.setPilot(slot, { channel: match.name });
+    if (!this.touched[slot]) {
+      /* The user never chose a channel for this slot: mirror the timer. Prefer
+       * the band and channel it reported over a frequency lookup — R7 and F8
+       * are both 5880, and a pilot who set R7 should see R7. */
+      const name = timerChannelName(rec);
+      if (name && name !== p.channel) {
+        this.race.setPilot(slot, { channel: name });
         this.savePilots();
       }
+      /* Enabled is still ours to decide (solo practice switches the others off). */
+      if (!!rec.enabled !== wantEnabled) this.pushConfig([slot]);
       return;
     }
-    /* Configured here before: our saved intent wins — but only now that the
-     * timer has said what it is actually holding, and only for the slots that
-     * really differ. */
-    if (mine !== rec.frequency || !!rec.enabled !== p.enabled) this.pushConfig([slot]);
+    /* The user chose this slot's channel here: that wins — but only now that
+     * the timer has said what it holds, and only if it actually differs. */
+    if (mine !== rec.frequency || !!rec.enabled !== wantEnabled) this.pushConfig([slot]);
   }
 
   /* ------------------------------------------------------ outbound config -- */
@@ -276,22 +360,30 @@ class App {
   flushConfig() {
     if (!this.canControl || !this._dirty.size) return;
     if (this.race.state === 'running' || this.race.state === 'staging') return;
+    const written = [];
     for (const slot of this._dirty) {
       const p = this.race.pilots.get(slot);
       if (!p) continue;
-      const { band, channel, frequency } = laprf.channelByName(p.channel);
       const cfg = this.rfFor(slot);
       const hw = this.timer.rfSetup[slot] || {};
-      /* Fall back to what the timer reported before falling back to a constant:
-       * a made-up threshold written over a working one is how a timer stops
-       * reporting laps for reasons nobody can see. */
+      /* A slot whose channel the user never chose keeps the frequency the timer
+       * reported. If the timer has not reported yet, the slot waits: writing
+       * the app's default there is how a club's race frequencies get lost. */
+      let rf;
+      if (this.touched[slot]) rf = laprf.channelByName(p.channel);
+      else if (hw.frequency) rf = { band: hw.band, channel: hw.channel, frequency: hw.frequency };
+      else continue;
+      /* Likewise thresholds and gain: what was measured or set here, else what
+       * the timer holds, and only as a last resort a constant. */
       this.link.send(laprf.setRfSetup({
-        slot, band, channel, frequency,
+        slot, band: rf.band, channel: rf.channel, frequency: rf.frequency,
         threshold: Number(cfg.threshold ?? hw.threshold ?? 1600),
         gain: Number(cfg.gain ?? hw.gain ?? 58),
         enabled: !!p.enabled }));
+      written.push(slot);
     }
-    this._dirty.clear();
+    for (const slot of written) this._dirty.delete(slot);
+    if (!written.length) return;
     this.link.send(laprf.setMinLapTime(Number(this.settings.timerMinLapMs) || 0));
     this.link.send(laprf.getRfSetup());
   }
@@ -315,7 +407,7 @@ class App {
     store.save('settings', this.settings);
     this.race.configure(this.settings);
     this.cal.preset = this.settings.preset;
-    this.markStructural();
+    if ('mode' in patch || 'preset' in patch) this.markStructural();
   }
 
   savePrefs(patch) {
@@ -332,15 +424,31 @@ class App {
 
   /* ------------------------------------------------------------------ race -- */
   setPilot(slot, patch) {
+    if (this.race.active && (patch.channel != null || patch.enabled != null)) {
+      toast('Finish the session first — the timer cannot be reconfigured mid-race');
+      return;
+    }
     this.race.setPilot(slot, patch);
     this.savePilots();
+    if (patch.channel != null) {
+      this.touched[slot] = true;
+      store.save('pilotsTouched', this.touched);
+    }
     if (patch.channel != null || patch.enabled != null) this.pushConfig([slot]);
-    this.markStructural();
+    /* Only a change of who is racing changes the shape of a screen. Rebuilding
+     * on a typed name throws away the focus of the field being typed in. */
+    if (patch.enabled != null) this.markStructural();
   }
 
   /** Solo flying is one pilot on slot 1; the others are switched off on the
    *  timer so their receivers cannot contribute phantom laps. */
   useMode(mode) {
+    if (this.race.active && mode !== this.mode) {
+      confirmSheet('End the session?',
+        'Switching modes ends the session that is running now. Its laps are saved to history first.',
+        'End and switch', () => { this.stop(); this.useMode(mode); });
+      return;
+    }
     this.mode = mode;
     store.save('mode', mode);
     if (mode === 'solo') {
@@ -358,6 +466,8 @@ class App {
   }
 
   start() {
+    if (!this.race.racing.length) { toast('Switch on at least one pilot first'); return; }
+    if (this.race.active) return;
     this.voice.arm();
     this.sessionBest = null;
     this.lastLap = null;
@@ -381,6 +491,7 @@ class App {
     this.race.reset();
     this.lastLap = null;
     this.sessionBest = null;
+    this.wake.release();
     this.flushConfig();
     this.render();
   }
@@ -392,6 +503,7 @@ class App {
     toast(r.message, r.ok ? 'ok' : 'err');
     this.recomputeSessionBest();
     this.lastLap = null;
+    if (r.resumed) { closeSheet(); if (this.prefs.keepAwake) this.wake.request(); }
     this.render();
   }
 
@@ -421,10 +533,12 @@ class App {
   }
 
   finishRace(results) {
-    store.appendHistory(results);
+    const anyLaps = results.results.some(r => r.laps > 0);
+    if (anyLaps) store.appendHistory(results);
     this.wake.release();
     this.render();
-    if (!this.race.solo || results.results[0]?.laps) this.showResults(results);
+    if (anyLaps) this.showResults(results);
+    else toast('Session ended — no laps were recorded, so nothing was saved');
   }
 
   showResults(results) {
@@ -438,9 +552,18 @@ class App {
    * has to be told in advance.
    */
   coach() {
+    if (this.connecting) {
+      return { tone: 'warn', text: this.connecting };
+    }
     if (!this.connected) {
-      return { tone: 'bad', text: 'Timer not connected.',
-               action: { label: 'Connect', fn: () => { this.screen = 'connect'; this.render(); } } };
+      const drop = this.link && this.linkKind !== 'demo';
+      return { tone: 'bad',
+               text: drop && this.linkKind === 'bluetooth'
+                 ? 'Timer link lost. Power-cycle the timer, then reconnect — laps by hand still count (keys 1–4).'
+                 : drop ? 'Timer link lost. Laps by hand still count (keys 1–4).'
+                 : 'Timer not connected.',
+               action: drop ? { label: 'Reconnect', fn: () => this.reconnect() }
+                            : { label: 'Connect', fn: () => { this.screen = 'connect'; this.render(); } } };
     }
     if (this.link.mode === 'ascii') {
       return { tone: 'warn',
@@ -489,12 +612,11 @@ class App {
     const cfg = this.rfFor(slot);
     const hw = this.timer.rfSetup[slot] || {};
     const p = this.race.pilots.get(slot);
-    const sig = this.sig.slots.get(slot);
     return tuning.gateHealth({
       threshold: cfg.threshold ?? hw.threshold ?? null,
       floor: cfg.floor ?? null,
       ceiling: cfg.ceiling ?? null,
-      live: this.sig.live(slot) ? sig?.value : null,
+      live: this.sig.quiet(slot),
       enabled: p ? p.enabled : true,
     });
   }
@@ -514,7 +636,11 @@ class App {
   }
 
   render() {
-    const build = SCREENS[this.connected ? this.screen : 'connect'] || SCREENS.connect;
+    /* The connect screen is for a browser with no link at all. A link that
+     * dropped mid-race keeps the race on screen — laps by hand still count and
+     * the coach offers the way back — instead of replacing the tower with
+     * "switch your timer on". */
+    const build = SCREENS[this.link ? this.screen : 'connect'] || SCREENS.connect;
     this.view = build(this);
     mount(document.getElementById('main'), this.view.node);
     mount(document.getElementById('topbar'), SCREENS.topbar(this));
@@ -526,10 +652,15 @@ class App {
   onKey(e) {
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
     const k = e.key;
-    if (k >= '1' && k <= '4') { this.manualLap(Number(k)); e.preventDefault(); return; }
+    /* A sheet owns the keyboard while it is open: Space on its focused Cancel
+     * must cancel, not stop the race behind it. */
+    if (sheetOpen()) return;
+    const onSession = this.link && (this.screen === 'fly' || this.screen === 'race');
+    if (k >= '1' && k <= '4') { if (onSession) { this.manualLap(Number(k)); e.preventDefault(); } return; }
     if (k === ' ') {
+      if (!onSession) return;
       e.preventDefault();
-      if (this.race.state === 'running' || this.race.state === 'staging') this.stop();
+      if (this.race.active) this.stop();
       else this.start();
       return;
     }
@@ -540,6 +671,16 @@ class App {
       this.go(this.mode === 'solo' ? 'fly' : 'race');
     }
   }
+}
+
+/** The channel name a timer's rfSetup record describes, or null if the record
+ *  is inconsistent (band/channel that do not produce its frequency). */
+function timerChannelName(rec) {
+  try {
+    const name = laprf.channelName(rec.band, rec.channel);
+    if (laprf.channelByName(name).frequency === rec.frequency) return name;
+  } catch (e) { /* fall through */ }
+  return laprf.channelsByFreq(rec.frequency)[0]?.name || null;
 }
 
 /** Turn a browser exception into something a pilot at a track can act on. */

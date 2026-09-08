@@ -189,6 +189,17 @@ export class SlotSignal {
     while (this.history.length && this.history[0].t < cut) this.history.shift();
   }
 
+  /** The recent quiet level: the median of the last `windowS` seconds. Unlike
+   *  the instantaneous value, a quad passing the gate does not move it — which
+   *  matters, because a verdict that says "can never detect a lap" every time a
+   *  lap is actually detected is worse than no verdict. */
+  quiet(windowS = 10) {
+    const cut = (this.lastAt || Date.now() / 1000) - windowS;
+    const vals = this.history.filter(h => h.t >= cut).map(h => h.v).sort((a, b) => a - b);
+    if (!vals.length) return null;
+    return vals[Math.floor(vals.length / 2)];
+  }
+
   /** Freeze the current quiet level as the baseline. Median ignores a stray spike. */
   calibrate() {
     const vals = (this.history.length ? this.history.map(h => h.v) : [this.value]).sort((a, b) => a - b);
@@ -235,6 +246,11 @@ export class SignalBank {
   live(slot, within = 8) {
     const s = this.slots.get(slot);
     return !!(s && s.lastAt && (Date.now() / 1000 - s.lastAt) < within);
+  }
+
+  /** Recent quiet level for a slot, or null if it has gone silent. */
+  quiet(slot) {
+    return this.live(slot) ? this.slots.get(slot).quiet() : null;
   }
 }
 

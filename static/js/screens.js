@@ -129,7 +129,7 @@ SCREENS.connect = app => {
         h('strong', app.connecting),
         h('p.muted', app.connectingKind === 'usb' ? 'Pick the timer’s serial port.'
           : 'Pick your timer in the browser’s list. It appears as CrabLake on most units.')),
-      h('button.ghost.wide', { onclick: () => { app.connecting = null; app.render(); } }, 'Cancel'));
+      h('button.ghost.wide', { onclick: () => app.cancelConnect() }, 'Cancel'));
     return { node };
   }
 
@@ -153,13 +153,19 @@ SCREENS.connect = app => {
 
   const buttons = h('div.stack.tight');
   const option = (primary, glyph, title, sub, kind) =>
-    h(primary ? 'button.bigbtn.go' : 'button.bigbtn', { onclick: () => app.connect(kind) },
+    h(primary ? 'button.bigbtn.go' : 'button.bigbtn',
+      { onclick: () => (kind === 'reconnect' ? app.reconnect() : app.connect(kind)) },
       h('div.ico', icon(glyph)), h('div', h('strong', title), h('small', sub)),
       h('div.chev', icon('chev', 20)));
 
   /* Whichever route is most likely to work goes first and green. A bridge that
    * already has the timer beats a Bluetooth chooser this browser cannot open. */
   const opts = [];
+  const dropped = app.link && !app.connected && app.linkKind !== 'demo';
+  if (dropped && app.linkKind === 'bluetooth' && app.link.device) {
+    opts.push(['reconnect', 'bluetooth', `Reconnect to ${app.link.deviceName || 'the timer'}`,
+               'Power-cycle it first — no chooser needed']);
+  }
   if (c.bluetooth) {
     opts.push(['bluetooth', 'bluetooth', 'Connect by Bluetooth', 'Recommended — full lap timing']);
   }
@@ -176,6 +182,12 @@ SCREENS.connect = app => {
     buttons.appendChild(option(i === 0, glyph, title, sub, kind)));
 
   const notes = h('div.stack.tight');
+  if (dropped && app.race.active) {
+    notes.appendChild(h('div.note', { 'data-tone': 'warn' },
+      h('strong', 'A session is still running'),
+      'Reconnect to keep timing from the gate, or press Esc to go back to it — laps by hand ' +
+      '(keys 1–4) count either way.'));
+  }
   if (app.connectError) {
     notes.appendChild(h('div.note', { 'data-tone': 'bad' },
       h('strong', app.connectError.title), app.connectError.body,
@@ -276,13 +288,10 @@ SCREENS.fly = app => {
   const gatePill = h('button.pill', { onclick: () => app.go('gate') });
 
   const narrow = () => window.innerWidth < 560;
-  body.appendChild(h('div.chanbar',
-    chanChip,
-    h('button', { title: 'Sweep every channel and pick the strongest',
-                  onclick: () => SCREENS.findChannel(app, 1) },
-      icon('radar', 18), narrow() ? ' Find' : ' Find my channel'),
-    h('div.grow'),
-    gatePill));
+  const findBtn = h('button', { title: 'Sweep every channel and pick the strongest',
+                                onclick: () => SCREENS.findChannel(app, 1) },
+    icon('radar', 18), narrow() ? ' Find' : ' Find my channel');
+  body.appendChild(h('div.chanbar', chanChip, findBtn, h('div.grow'), gatePill));
 
   /* --- coach ------------------------------------------------------------ */
   const coach = h('div.coach');
@@ -350,28 +359,28 @@ SCREENS.fly = app => {
     const fresh = app.lastLap && (performance.now() - app.lastLap.at) < 2600;
     if (r.state === 'running' && fresh) {
       heroState.textContent = `Lap ${app.lastLap.n}`;
-      heroBig._raw = fmt2(app.lastLap.time); heroBig.textContent = heroBig._raw;
+      setHero(heroBig, fmt2(app.lastLap.time));
       heroBig.dataset.tone = app.lastLap.time === app.sessionBest ? 'purple'
                            : app.lastLap.isPb ? 'green' : '';
     } else if (r.state === 'running') {
       const since = p.lastPass != null ? (performance.now() / 1000) - p.lastPass : r.elapsed;
       heroState.textContent = `Lap ${p.lapCount + 1} · running`;
-      heroBig._raw = clockStr(since); heroBig.textContent = heroBig._raw;
+      setHero(heroBig, clockStr(since));
       heroBig.dataset.tone = '';
     } else if (r.state === 'staging') {
       heroState.textContent = 'Get ready';
-      heroBig._raw = Math.ceil(r.countdownLeft ?? 0); heroBig.textContent = heroBig._raw;
+      setHero(heroBig, String(Math.ceil(r.countdownLeft ?? 0)));
       heroBig.dataset.tone = '';
     } else if (r.state === 'finished') {
       heroState.textContent = p.best != null ? 'Best lap' : 'Session over';
-      heroBig._raw = p.best != null ? fmt2(p.best) : '0.0'; heroBig.textContent = heroBig._raw;
+      setHero(heroBig, p.best != null ? fmt2(p.best) : '0.0');
       heroBig.dataset.tone = p.best != null ? 'purple' : 'idle';
     } else {
       heroState.textContent = 'Ready';
-      heroBig._raw = '0.0'; heroBig.textContent = heroBig._raw;
+      setHero(heroBig, '0.0');
       heroBig.dataset.tone = 'idle';
     }
-    splitDecimal(heroBig);
+
 
     if (app.lastLap && app.lastLap.at !== lastHitAt) {
       lastHitAt = app.lastLap.at;
@@ -392,14 +401,18 @@ SCREENS.fly = app => {
     const s = r.state;
     const running = s === 'running' || s === 'staging';
     const blind = !running && hp.fatal;
-    mount(primary, icon(running ? 'stop' : 'play', 22),
+    setPrimary(primary, running ? 'stop' : 'play',
       running ? 'Stop'
       : blind ? 'Start anyway — laps may not record'
-      : s === 'finished' ? 'Go again' : 'Start flying');
-    primary.className = 'primary wide ' + (running ? 'danger' : blind ? 'warn' : 'go');
+      : s === 'finished' ? 'Go again' : 'Start flying',
+      'primary wide ' + (running ? 'danger' : blind ? 'warn' : 'go'));
     undoBtn.disabled = p.lapCount === 0;
     manualBtn.disabled = s !== 'running';
     endBtn.disabled = s !== 'running' && s !== 'staging';
+    /* Changing channel mid-session would not reach the timer until the session
+     * ends, so the chip would say R6 while the receiver sat on R1. */
+    chanSel.disabled = running;
+    findBtn.disabled = running || !app.canControl;
   };
   update();
   return { node, update };
@@ -407,10 +420,8 @@ SCREENS.fly = app => {
 
 /** Render "10.77" as 10 + a smaller .77, without a second source of truth for
  *  the value: the text is set normally and re-split here each frame. */
-function splitDecimal(node) {
-  const text = String(node._raw ?? node.textContent);
-  if (node._split === text) return;
-  node._split = text;
+function setHero(node, text) {
+  if (node._raw === text) return;
   node._raw = text;
   const dot = text.indexOf('.');
   if (dot < 0) { node.textContent = text; }
@@ -419,6 +430,16 @@ function splitDecimal(node) {
     node.appendChild(h('span.dec', text.slice(dot)));
   }
   if (text.length > 5) node.dataset.wide = ''; else delete node.dataset.wide;
+}
+
+/** Primary-button label and glyph, written only when they change: this runs
+ *  every frame and an SVG per frame is battery for nothing. */
+function setPrimary(btn, glyph, label, cls) {
+  const key = glyph + '|' + label + '|' + cls;
+  if (btn._key === key) return;
+  btn._key = key;
+  mount(btn, icon(glyph, 22), label);
+  btn.className = cls;
 }
 
 function statCell(label) {
@@ -501,9 +522,10 @@ function raceSetup(app) {
                         onchange: e => app.setPilot(slot, { channel: e.target.value }) },
             ...laprf.ALL_CHANNELS.map(c => h('option', { value: c.name, selected: c.name === p.channel },
               `${c.name} · ${c.freq}`)))),
-        gateBadge(app, slot));
+        badges[slot] = gateBadge(app, slot));
     }));
   };
+  const badges = {};
   drawPilots();
 
   /* 2 — format */
@@ -590,33 +612,48 @@ function raceSetup(app) {
      * button still works — it is their call — but it stops looking like the
      * obvious next thing to press, and says what it is agreeing to. */
     const blind = app.race.racing.some(p => app.health(p.slot).fatal);
-    mount(primary, icon('play', 22),
+    setPrimary(primary, 'play',
       n === 0 ? 'Switch on at least one pilot' :
       blind ? 'Start anyway — laps may not record' :
       app.settings.countdown > 0 ? `Arm the race · ${plural(n, 'pilot')}`
-                                 : `Start now · ${plural(n, 'pilot')}`);
-    primary.className = 'primary wide ' + (blind ? 'warn' : 'go');
+                                 : `Start now · ${plural(n, 'pilot')}`,
+      'primary wide ' + (blind ? 'warn' : 'go'));
     primary.disabled = n === 0;
   };
   update();
-  /* Structural pieces only redraw when the model behind them changes. */
-  let sig = '';
+  /* Structural pieces only redraw when the shape of the screen changes: who is
+   * racing and which format. Names and channels are the inputs themselves, and
+   * a receiver's verdict is painted in place — rebuilding the form for either
+   * throws away whatever is being typed. */
+  let sig = '', gateSig = '';
   const structural = () => {
-    const now = JSON.stringify([...app.race.pilots.values()].map(p => [p.name, p.channel, p.enabled])) +
-                app.settings.mode + SLOTS.map(s => app.health(s).level).join('');
-    if (now === sig) return;
-    sig = now; drawPilots(); drawDetail(); drawGate();
+    const now = SLOTS.map(s => app.race.pilots.get(s).enabled ? '1' : '0').join('') + app.settings.mode;
+    if (now !== sig) { sig = now; drawPilots(); drawDetail(); }
+    const g = SLOTS.map(s => app.health(s).level).join(',');
+    if (g !== gateSig) {
+      gateSig = g;
+      drawGate();
+      for (const s of SLOTS) if (badges[s]) refreshBadge(badges[s], app.health(s));
+    }
   };
   structural();
   return { node, update: () => { update(); structural(); } };
 }
 
 function gateBadge(app, slot) {
-  const hp = app.health(slot);
+  const b = h('button.pill', { onclick: () => app.go('gate') }, h('span.dot'), '');
+  refreshBadge(b, app.health(slot));
+  return b;
+}
+
+function refreshBadge(b, hp) {
   const tone = hp.level === 'good' ? 'ok' : hp.fatal || hp.level === 'bad' ? 'bad'
              : hp.level === 'off' ? '' : 'warn';
-  return h('button.pill', { 'data-tone': tone, onclick: () => app.go('gate'), title: hp.detail },
-    h('span.dot'), hp.title);
+  if (b._t === hp.title + tone) return;
+  b._t = hp.title + tone;
+  b.dataset.tone = tone;
+  b.title = hp.detail;
+  mount(b, h('span.dot'), hp.title);
 }
 
 function numField(label, value, min, max, step, onChange, hint) {
@@ -700,12 +737,11 @@ function raceLive(app) {
     tower.style.display = 'grid';
 
     if (r.state === 'finished') {
-      mount(primary, icon('play', 22), 'Set up the next race');
-      primary.className = 'primary go wide';
+      setPrimary(primary, 'play', 'Set up the next race', 'primary go wide');
       primary.onclick = () => app.resetRace();
     } else {
-      mount(primary, icon('stop', 22), r.state === 'staging' ? 'Cancel start' : 'Stop the race');
-      primary.className = 'primary danger wide';
+      setPrimary(primary, 'stop', r.state === 'staging' ? 'Cancel start' : 'Stop the race',
+                 'primary danger wide');
       primary.onclick = () => (r.state === 'staging' ? app.resetRace() : app.stop());
     }
   };
@@ -734,7 +770,8 @@ SCREENS.gate = app => {
 
   const wizardBox = h('div.card.stack');
   const slotBox = h('div.stack');
-  const advanced = h('details.card');
+  const advanced = h('details.card', { open: app.gateAdvancedOpen || null,
+    ontoggle: e => { app.gateAdvancedOpen = e.target.open; } });
 
   const drawWizard = () => {
     const phase = app.cal.phase;
@@ -797,7 +834,7 @@ SCREENS.gate = app => {
   /* A receiver that is not racing is not a problem to solve, so it collapses to
    * one line. Solo practice would otherwise open this screen on three sets of
    * instruments for slots nobody is flying. */
-  let showAll = app.race.racing.length === SLOTS.length;
+  let showAll = app.gateShowAll || app.race.racing.length === SLOTS.length;
   const slotCards = new Map();
   const drawSlots = () => {
     clear(slotBox);
@@ -830,7 +867,7 @@ SCREENS.gate = app => {
     }
     if (!showAll) {
       slotBox.appendChild(h('button.ghost', {
-        onclick: () => { showAll = true; drawSlots(); } }, 'Show all four receivers'));
+        onclick: () => { showAll = app.gateShowAll = true; drawSlots(); } }, 'Show all four receivers'));
     }
   };
   drawSlots();
@@ -852,9 +889,7 @@ SCREENS.gate = app => {
                              app.pushConfig([slot], { now: true }); } }))))),
       h('div.row',
         h('button.ghost', { onclick: () => SCREENS.findChannel(app, 1) },
-          icon('radar', 18), ' Scan 40 channels'),
-        h('button.ghost', { onclick: () => { app.sig.calibrate(); toast('Baseline captured', 'ok'); } },
-          'Recapture signal baseline'))));
+          icon('radar', 18), ' Scan 40 channels'))));
 
   mount(wrap,
     h('div.row', { style: { justifyContent: 'space-between' } },
@@ -999,6 +1034,10 @@ SCREENS.findChannel = (app, slot) => {
     toast('Scanning needs a control link — connect over Bluetooth', 'err');
     return;
   }
+  if (app.race.active) {
+    toast('Stop the session first — a scan moves the receiver off your channel', 'err');
+    return;
+  }
   const bars = h('div.scanbars');
   const status = h('p.muted', 'Power your quad up with video ON and hold it a metre from the ' +
                               'timer. The scan takes about 20 seconds.');
@@ -1126,8 +1165,10 @@ SCREENS.history = app => {
 
   const csv = () => {
     const blob = new Blob([store.historyCsv()], { type: 'text/csv' });
-    const a = h('a', { href: URL.createObjectURL(blob), download: 'whooptimer-history.csv' });
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: 'whooptimer-history.csv' });
     document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   };
 
   mount(list, ...(races.length ? races.map(r => {

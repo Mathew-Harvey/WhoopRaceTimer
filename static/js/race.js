@@ -1,6 +1,6 @@
 /* Race state machine: pilots, laps, formats, callouts.
  *
- * Port of race.py, now running in the browser so the app needs no server.
+ * Runs in the browser so the app needs no server.
  *
  * Lap timing rule: whoops normally launch from behind the gate, so the FIRST
  * gate crossing after the start ends lap 1 — it is not a separate holeshot. Set
@@ -9,7 +9,16 @@
  *
  * A minimum lap time is enforced here regardless of the timer's own setting,
  * because a whoop hovering in the gate will otherwise register a burst of
- * passes.
+ * passes. It applies to the first crossing too: a quad lifting off a metre
+ * behind the gate can trip the receiver as it rises, and a 0.4 s "lap 1" that
+ * then stands as the session's best all night is worse than a missed first lap.
+ *
+ * Lap times prefer the timer's own clock. Each passing record carries the
+ * timer's millisecond timestamp; the browser only sees when the notification
+ * *arrived*, which over Bluetooth or a wifi bridge can lag by tens of
+ * milliseconds and can bunch two crossings into one delivery. The timer's
+ * clock decides lap lengths and who crossed first; browser time is only the
+ * reference for the very first crossing after the start.
  */
 'use strict';
 
@@ -19,6 +28,9 @@ export const DEFAULT_CHANNELS = ['R1', 'R3', 'R6', 'R7'];
 
 const now = () => performance.now() / 1000;
 const round3 = v => Math.round(v * 1000) / 1000;
+/* A timer-clock lap that disagrees with wall-clock by more than this is a
+ * clock reset (power-cycle mid-race), not a better measurement. */
+const RTC_TRUST_S = 2.0;
 
 export class Pilot {
   constructor(slot, { name = '', channel = 'R1', enabled = true, colour = null } = {}) {
@@ -30,12 +42,22 @@ export class Pilot {
     this.reset();
   }
 
-  reset() { this.laps = []; this.lastPass = null; this.started = false; }
+  reset() {
+    this.laps = [];
+    this.lastPass = null;     // browser time of the last counted crossing (or the away crossing)
+    this.lastRtc = null;      // timer clock (ms) at that crossing, when known
+    this.started = false;
+    this.awayAt = null;       // holeshot: browser time of the crossing that started the clock
+    this.awayRtc = null;
+    this.doneAt = null;       // laps mode: when the target lap was crossed
+  }
 
   get lapCount() { return this.laps.length; }
   get best() { return this.laps.length ? Math.min(...this.laps.map(l => l.time)) : null; }
   get last() { return this.laps.length ? this.laps[this.laps.length - 1].time : null; }
   get total() { return this.laps.reduce((a, l) => a + l.time, 0); }
+  /** Browser time of the most recent counted lap; Infinity when there is none. */
+  get lastAt() { return this.laps.length ? this.laps[this.laps.length - 1].at : Infinity; }
 
   /** Fastest n back-to-back laps — the standard whoop/drone race metric. */
   bestConsecutive(n = 3) {
@@ -51,6 +73,8 @@ export class Pilot {
   }
 }
 
+let runCounter = 0;
+
 export class Race {
   constructor(opts = {}) {
     this.pilots = new Map();
@@ -65,10 +89,13 @@ export class Race {
     this.countdown = 5;
     this.startedAt = null;
     this.finishedAt = null;
+    this.finishedBy = null;           // 'auto' (format reached its end) | 'manual' (Stop)
     this.stagingUntil = null;
     this.name = '';
+    this.runId = null;                // identifies one race across a finish/undo/refinish
     this.log = [];
     this._announcedLastLap = new Set();
+    this._leader = null;
     this.onCallout = opts.onCallout || (() => {});
     this.onChange = opts.onChange || (() => {});
     this.onFinish = opts.onFinish || (() => {});
@@ -101,6 +128,10 @@ export class Race {
 
   get open() { return this.mode === 'practice'; }
 
+  /** A session is in progress: config that changes what the timer is doing
+   *  must wait. */
+  get active() { return this.state === 'running' || this.state === 'staging'; }
+
   /* ---- control ---- */
   arm(countdown) {
     this._clear();
@@ -116,8 +147,11 @@ export class Race {
     for (const p of this.pilots.values()) p.reset();
     this.log = [];
     this._announcedLastLap = new Set();
+    this._leader = null;
     this.finishedAt = null;
+    this.finishedBy = null;
     this.startedAt = null;
+    this.runId = `${Math.floor(Date.now() / 1000)}-${++runCounter}`;
   }
 
   _begin() {
@@ -129,9 +163,18 @@ export class Race {
     this.onChange();
   }
 
-  stop() {
+  /**
+   * End the race. `by: 'auto'` means the format reached its own end (every
+   * pilot done, or time up); anything else is the director pressing Stop.
+   * The distinction matters for undo: a race that ended itself can resume
+   * when the finishing lap is taken back; a race someone stopped stays stopped.
+   */
+  stop({ at = null, by = 'manual' } = {}) {
     const wasRunning = this.state === 'running';
-    if (wasRunning) this.finishedAt = now();
+    if (wasRunning) {
+      this.finishedAt = at ?? now();
+      this.finishedBy = by;
+    }
     this.state = 'finished';
     this.stagingUntil = null;
     this._log(this.open ? 'Session ended' : 'Race complete');
@@ -162,17 +205,31 @@ export class Race {
     return this.stagingUntil ? Math.max(0, this.stagingUntil - now()) : null;
   }
 
+  /** Time-limit reached. The end is stamped at exactly the limit, however late
+   *  the tick that noticed it — a backgrounded tab must not stretch a race. */
+  _timeUp() {
+    this.stop({ at: this.startedAt + this.targetSeconds, by: 'auto' });
+  }
+
   tick() {
     if (this.state === 'staging' && this.stagingUntil) {
       if (this.stagingUntil - now() <= 0) this._begin();
       return;
     }
     if (this.state === 'running' && this.mode === 'time' && this.elapsed >= this.targetSeconds) {
-      this.stop();
+      this._timeUp();
     }
   }
 
   /* ---- standings ---- */
+  /**
+   * Race order. Most laps first; among equal lap counts, whoever reached that
+   * count first. That is what "who is winning" means at a gate — and it is
+   * the only ordering that agrees with the winner the room was told about.
+   * (Summing lap times looked equivalent but is not: with a holeshot start
+   * the run-up to the first crossing is excluded, so a pilot who crossed the
+   * line second could still show the smaller sum.)
+   */
   standings() {
     const ps = [...this.racing];
     if (this.mode === 'consecutive') {
@@ -181,35 +238,57 @@ export class Race {
         return (ca ?? 1e9) - (cb ?? 1e9);
       });
     }
-    return ps.sort((a, b) => (b.lapCount - a.lapCount) ||
-                             ((a.lapCount ? a.total : 1e9) - (b.lapCount ? b.total : 1e9)));
+    return ps.sort((a, b) => (b.lapCount - a.lapCount) || (a.lastAt - b.lastAt));
   }
 
   /* ---- the hot path ---- */
-  onPassing(slot, at) {
+  /**
+   * A gate crossing. `at` is browser time (defaults to now); `rtc` is the
+   * timer's own millisecond clock from the passing record, when the transport
+   * carries one. Returns true when a lap was counted.
+   */
+  onPassing(slot, at, rtc = null) {
     const p = this.pilots.get(slot);
     if (!p || !p.enabled) return false;
     if (this.state !== 'running') return false;
     const t = at ?? now();
 
-    const ref = p.lastPass ?? this.startedAt;
-    if (p.lastPass !== null && (t - p.lastPass) < this.minLap) return false;
+    /* A time limit is a wall. A crossing after it ends the race at the limit
+     * and does not count, so a backgrounded tab cannot let late laps in. */
+    if (this.mode === 'time' && (t - this.startedAt) >= this.targetSeconds) {
+      this._timeUp();
+      return false;
+    }
+    /* A pilot who has finished a laps race is finished. Cool-down laps must not
+     * out-rank the announced winner. */
+    if (this.mode === 'laps' && p.lapCount >= this.targetLaps) return false;
 
     if (this.holeshot && !p.started) {
       p.started = true;
       p.lastPass = t;
+      p.lastRtc = rtc;
+      p.awayAt = t;
+      p.awayRtc = rtc;
       this._log(`${p.name} away`);
       this.onCallout(this.solo ? 'Away' : `${p.name} away`);
       this.onChange();
       return false;
     }
 
-    const lapTime = t - (ref ?? t);
+    const ref = p.lastPass ?? this.startedAt;
+    if ((t - ref) < this.minLap) return false;
+
+    let lapTime = t - ref;
+    if (rtc != null && p.lastRtc != null) {
+      const d = (rtc - p.lastRtc) / 1000;
+      if (d > 0 && Math.abs(d - lapTime) < RTC_TRUST_S) lapTime = d;
+    }
     p.lastPass = t;
+    p.lastRtc = rtc;
     p.started = true;
     const n = p.laps.length + 1;
     const prevBest = p.best;
-    p.laps.push({ n, time: round3(lapTime), at: t });
+    p.laps.push({ n, time: round3(lapTime), at: t, rtc });
 
     const isPb = n > 1 && prevBest !== null && lapTime < prevBest;
     this._log(`${p.name} lap ${n}: ${lapTime.toFixed(2)}s${isPb ? '  PB' : ''}`);
@@ -219,7 +298,7 @@ export class Race {
     this.onLap({ pilot: p, n, time: round3(lapTime), isPb });
     this.onCallout(this._calloutText(p, n, lapTime, isPb), { lapTime: round3(lapTime) });
 
-    this._checkFinish(p, n);
+    this._checkFinish(p, n, t);
     this.onChange();
     return true;
   }
@@ -231,18 +310,30 @@ export class Race {
     const p = this.pilots.get(slot);
     if (!p || !p.laps.length) return { ok: false, message: 'no lap to undo' };
     const removed = p.laps.pop();
-    /* rewind the reference point so the NEXT pass times from the right place */
-    p.lastPass = p.laps.length ? p.laps[p.laps.length - 1].at : null;
-    p.started = p.laps.length > 0;
+    /* Rewind the reference point so the NEXT pass times from the right place.
+     * With a holeshot start, taking back lap 1 lands on the away crossing —
+     * the quad is still out there, and the next crossing is a lap, not a
+     * second "away". */
+    const last = p.laps[p.laps.length - 1];
+    p.lastPass = last ? last.at : (this.holeshot ? p.awayAt : null);
+    p.lastRtc = last ? (last.rtc ?? null) : (this.holeshot ? p.awayRtc : null);
+    p.started = !!last || (this.holeshot && p.awayAt != null);
+    p.doneAt = null;
     this._announcedLastLap.delete(slot);
-    if (this.state === 'finished' && this.mode === 'laps' &&
+    let resumed = false;
+    if (this.state === 'finished' && this.finishedBy === 'auto' && this.mode === 'laps' &&
         this.racing.some(q => q.lapCount < this.targetLaps)) {
-      this.state = 'running';           // undoing the winning lap resumes the race
+      /* The race ended itself on this lap; without it, it is still on. A race
+       * the director stopped stays stopped — Stop meant Stop. */
+      this.state = 'running';
       this.finishedAt = null;
+      this.finishedBy = null;
+      resumed = true;
     }
     this._log(`${p.name} lap ${removed.n} removed (${removed.time.toFixed(2)}s)`);
     this.onChange();
-    return { ok: true, message: `removed lap ${removed.n}` };
+    return { ok: true, message: resumed ? `removed lap ${removed.n} — racing again` : `removed lap ${removed.n}`,
+             resumed };
   }
 
   /** The most recent lap across everyone, for a one-tap undo. */
@@ -255,27 +346,27 @@ export class Race {
     return best ? best.slot : null;
   }
 
-  _checkFinish(p, n) {
+  _checkFinish(p, n, t) {
     if (this.mode === 'laps') {
       if (n === this.targetLaps - 1 && !this._announcedLastLap.has(p.slot)) {
         this._announcedLastLap.add(p.slot);
         this.onCallout(this.solo ? 'Last lap' : `${p.name}, last lap`);
       }
       if (n >= this.targetLaps) {
+        p.doneAt = t;
         const done = this.racing.filter(q => q.lapCount >= this.targetLaps);
         if (done.length === 1 && !this.solo) {
           this.onCallout(`${p.name} wins!`, { priority: true });
           this._log(`${p.name} wins`);
         }
-        if (this.racing.every(q => q.lapCount >= this.targetLaps)) this.stop();
+        if (this.racing.every(q => q.lapCount >= this.targetLaps)) this.stop({ at: t, by: 'auto' });
       }
     } else if (this.mode === 'consecutive') {
-      const c = p.bestConsecutive(this.consecN);
-      if (c !== null && n >= this.consecN) {
-        const leader = this.standings()[0];
-        if (leader === p && n === this.consecN && !this.solo) {
-          this.onCallout(`${p.name} leads, ${c.toFixed(1)}`);
-        }
+      const leader = this.standings()[0];
+      const c = leader?.bestConsecutive(this.consecN);
+      if (leader && c != null && leader !== this._leader) {
+        this._leader = leader;
+        if (!this.solo) this.onCallout(`${leader.name} leads, ${c.toFixed(1)}`);
       }
     }
   }
@@ -296,6 +387,7 @@ export class Race {
   results() {
     const order = this.standings();
     return {
+      runId: this.runId,
       name: this.name || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       at: Date.now() / 1000,
       mode: this.mode,
@@ -303,6 +395,7 @@ export class Race {
       targetSeconds: this.targetSeconds,
       consecN: this.consecN,
       duration: Math.round(this.elapsed * 100) / 100,
+      finishedBy: this.finishedBy,
       results: order.map((p, i) => ({
         pos: i + 1, slot: p.slot, name: p.name, channel: p.channel,
         laps: p.lapCount, best: p.best, consec: p.bestConsecutive(this.consecN),

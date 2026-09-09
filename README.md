@@ -315,9 +315,18 @@ python3 server.py --rotorhazard              # find a node
 python3 server.py --rotorhazard /dev/ttyUSB0 # or name its port
 ```
 
-Then open the address it prints. It disables the LapRF serial transport while
-it runs, because that would otherwise open the same port and read a different
-protocol out of it.
+Then open the address it prints. Both LapRF transports are switched off while it
+runs. The serial one would otherwise open the node's own port and read a
+different protocol out of it, and Bluetooth would find any LapRF powered on in
+the same room — the page cannot tell two timers apart, so every crossing would
+be counted twice, on one slot, at two different signal scales, and the setup
+handshake would go to the LapRF while the node kept its own threshold.
+
+Searching for a node means opening each USB serial port in turn, and opening a
+port resets an Arduino-class board — a flight controller included. Every port
+tried is named in the bridge log, and the search backs off from a second and a
+half to thirty seconds so a bench is not reset on a loop. Ports that are not USB
+devices are left alone; name the port to use a node on a board's own UART.
 
 Two protocols meet. RotorHazard is request/response — one command byte out, a
 fixed-size payload back, a one-byte checksum — and the node never speaks
@@ -341,6 +350,20 @@ five — so a median of five erases an artefact while leaving a pass, which last
 about half a second and covers eleven samples, untouched. A lap the node reports
 is checked against the filtered signal before it is passed on: if that never
 rose, no quad went through.
+
+That check is deliberately the app's own minimum rise, converted, and not a
+number chosen here. A veto coarser than what the app calibrates to is a second
+trigger that silently overrules the first: the node arms where it was asked and
+counts every real lap, and the translator throws them away — and because the app
+lowers its trigger from the evidence in reported passes, suppressing the pass
+destroys the evidence that would have fixed the gate.
+
+A retune throws the signal window away, because a receiver that has moved has not
+been listening to the new frequency at all. Measured on the bench: 5658 and 5917
+had ambient levels twenty counts apart, and a window straddling the change takes
+its quiet level from the lower of the two, so every ordinary reading on the
+higher one cleared it by more than the rise a lap has to show. It counted a lap a
+second until the old readings aged out.
 
 ## Setup check
 

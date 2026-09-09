@@ -400,7 +400,12 @@ class App {
       const per = Object.entries(rec.slots || {})
         .map(([k, v]) => `s${k}=${v.lastRssi ?? v.meanRssi ?? '—'}`).join(' ');
       this.logLine(`rx ${rec.type} ${per || '(no slot data)'}` +
-                   (rec.batteryVoltage ? ` batt=${rec.batteryVoltage}` : ''));
+                   (rec.batteryVoltage ? ` batt=${rec.batteryVoltage}` : '') +
+                   /* The timer's own opinion of whether it is timing at all.
+                    * Absent from this line for a long time, which is why a gate
+                    * that was never armed looked like a gate that was tuned
+                    * wrong. */
+                   (rec.gateState !== undefined ? ` gate=${laprf.gateStateName(rec.gateState)}` : ''));
       return;
     }
     this.logLine('rx ' + rec.type + ' ' + JSON.stringify(rec, (k, v) =>
@@ -500,15 +505,21 @@ class App {
    */
   onGateState(state) {
     if (state === this.timer.gateState) return;
-    const was = this.timer.gateState;
     this.timer.gateState = state;
-    if (was === undefined) return;              // first report is not a change
+    /* The first report counted for nothing, which hid the one state that
+     * matters most: a timer that comes up idle is not looking for crossings at
+     * all. It reports signal, accepts a threshold, echoes it back, and reports
+     * no laps — indistinguishable from a gate tuned wrong, and no amount of
+     * tuning fixes it. An initial idle is exactly as fatal as going idle. */
     this.logLine('gate state -> ' + laprf.gateStateName(state));
     if (state === laprf.GATE.crashed) {
       toast('The timer reports it has crashed — power-cycle it. It is not timing.', 'err', 12000);
       this.voice.say('The timer has stopped. Power cycle it.', { priority: true });
     } else if (state === laprf.GATE.idle) {
-      toast('The timer went idle — it is not looking for crossings.', 'err', 8000);
+      /* Arming it is the whole remedy, and the protocol has a record for
+       * exactly this. Nothing here has ever sent one. */
+      toast('The timer was idle — arming it', 'err', 6000);
+      if (this.canControl) this.link.send(laprf.setGateState(laprf.GATE.active));
     }
     this.markStructural();
   }

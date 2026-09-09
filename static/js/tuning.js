@@ -816,7 +816,14 @@ export class ChannelScanner {
    * is a question only the pilot can answer.
    */
   static signals(results) {
-    const seen = results.filter(r => (r.samples ?? 2) >= 1);
+    /* Two readings, not one. A channel the sweep only managed a single sample
+     * on has no protection from a stale or contaminated value — the rule that
+     * takes the lower of two cannot apply — and single samples of 2400 on
+     * channels 200 MHz from anything were what put a phantom transmitter in the
+     * list. If almost nothing got two, fall back rather than report nothing. */
+    const solid = results.filter(r => (r.samples ?? 2) >= 2);
+    const seen = solid.length >= results.length / 2 ? solid
+                                                    : results.filter(r => (r.samples ?? 2) >= 1);
     if (!seen.length) return [];
     const peaks = seen.map(r => r.peak).sort((a, b) => a - b);
     const median = peaks[Math.floor(peaks.length / 2)];

@@ -124,6 +124,12 @@ PASS_LOOKBACK_S = 1.5
 BASELINE_WINDOW_S = 10.0
 BASELINE_QUANTILE = 0.2
 
+#: How much unresolved inbound can wait for its tail before it is thrown away,
+#: and how much of it to keep when that happens. The same shape as the app's own
+#: reader: enough to hold any real frame several times over, bounded so that
+#: bytes which will never form a record cannot accumulate for a whole session.
+MAX_PENDING, KEEP_PENDING = 4096, 1024
+
 #: No lap is judged until there is enough of that window to judge against.
 #: Counted in samples rather than seconds so it means the same thing however
 #: the poll rate is set, and so a test can reach it without waiting.
@@ -479,8 +485,17 @@ class RotorHazardNode:
             self._pending.clear()
         records, rest = laprf.split_records(buf)
         if rest:
+            # A partial frame waits for its tail — but only so long. Bytes that
+            # never resolve into a record would otherwise accumulate for the
+            # life of the session: a page sending something malformed, or a
+            # frame truncated by a dropped connection, and this grows without
+            # limit while never yielding anything. The app's own reader caps its
+            # buffer for the same reason.
+            if len(rest) > MAX_PENDING:
+                self.on_log(f"discarding {len(rest)} bytes that never formed a record")
+                rest = rest[-KEEP_PENDING:]
             with self._lock:
-                self._pending[:0] = rest        # a partial frame waits for its tail
+                self._pending[:0] = rest
         for r in records:
             try:
                 self._apply(laprf.decode_record(r))

@@ -289,6 +289,26 @@ for _ in range(80):
 node._emit_pass(stats(240))                  # and a node insisting on a lap
 eq("a lap with a high reported peak but no rise is refused", len(emitted), 0)
 
+# ---- inbound that never resolves -------------------------------------------
+# A page sending something malformed, or a frame truncated by a dropped
+# connection, leaves bytes that will never form a record. Held forever they
+# accumulate for the life of the session while yielding nothing.
+node = wire(rh.RotorHazardNode(on_raw=lambda b: None, on_log=lambda m: None), FakeSerial())
+node.send(b"\x5a" * 20000)          # a frame start that never ends
+node._drain_pending()
+check("unresolved inbound is bounded", len(node._pending) <= rh.MAX_PENDING,
+      f"holding {len(node._pending)} bytes")
+# And a real frame arriving in two pieces still assembles.
+node = wire(rh.RotorHazardNode(on_raw=lambda b: None, on_log=lambda m: None), FakeSerial())
+node._frequency = 5658
+frame = laprf.get_rf_setup(1)
+seen = []
+node.on_raw = seen.append
+node.send(frame[:6]); node._drain_pending()
+eq("half a frame does nothing yet", len(seen), 0)
+node.send(frame[6:]); node._drain_pending()
+eq("and the other half completes it", len(seen), 1)
+
 # ---- refusing what it is not -----------------------------------------------
 # The safety property that matters on a bench with two timers on it: this must
 # never adopt a LapRF, and the LapRF serial path must never adopt a node.

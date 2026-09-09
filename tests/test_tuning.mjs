@@ -211,7 +211,22 @@ function sweep(overrides) {
   check('and neither is hidden as "calibrating"',
         missing.level !== 'learning' && none.level !== 'learning', 'a dead gate said nothing');
 
-  /* Too little evidence is still just calibrating — that is not a fault. */
+  /* Counting every pass, on enough laps to mean it, outranks the wizard even
+   * before the evidence bar for "ready" is met — that combination used to read
+   * red on a gate that was timing every lap. */
+  eq('a gate counting every pass is good',
+     gateHealth({ threshold: 1560, floor: 900, ceiling: 1300, live: 900,
+                  cal: { ready: false, seen: 4, verdict: 'good' } }).level, 'good');
+
+  /* A thin margin is not the same as missing passes, and telling a pilot whose
+   * gate counts every lap that laps are being missed is simply wrong. */
+  const thin = gateHealth({ ...base, cal: { ready: false, seen: 6, verdict: 'fragile' } });
+  eq('a thin margin warns', thin.level, 'warn');
+  check('and says what is actually wrong', /thin|only just/i.test(thin.title + thin.detail),
+        thin.title + ' — ' + thin.detail);
+
+  /* Too little evidence is still just calibrating — that is not a fault, and
+   * one lucky lap is not a calibrated gate either. */
   eq('a fresh receiver is calibrating',
      gateHealth({ ...base, cal: { ready: false, seen: 1, verdict: 'good' } }).level, 'learning');
   eq('and so is one that has flown nothing',

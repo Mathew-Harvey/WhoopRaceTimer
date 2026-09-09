@@ -1177,7 +1177,8 @@ function renderPassLine(app, slot, ref, sig, threshold) {
    * counts stop changing while the suggestion keeps moving — so the button went
    * on offering, and writing, a level from twelve laps ago. */
   const key = `${rep.seen}|${rep.counted}|${rep.worstMiss}|${rep.verdict}|` +
-              `${Math.round(threshold ?? -1)}|${Math.round(rep.suggest ?? -1)}`;
+              `${Math.round(threshold ?? -1)}|${Math.round(rep.suggest ?? -1)}|` +
+              `${Math.round(rep.thinnest ?? -1)}`;
   if (ref.passLine._t === key) return;
   ref.passLine._t = key;
 

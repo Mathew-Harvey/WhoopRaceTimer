@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const VERSION = 'wt-15';
+const VERSION = 'wt-16';
 const SHELL = [
   './', 'index.html', 'app.css', 'manifest.webmanifest', 'icon.svg',
   'icon-192.png', 'icon-512.png', 'icon-maskable.png',

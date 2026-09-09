@@ -77,8 +77,11 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true, ca
    * left every one of them reading "still calibrating" forever — and judging a
    * re-tuned gate on *stale* bounds made it read "trigger is above the strongest
    * pass" seconds after the app had said out loud that it was calibrated. */
-  if (cal.ready) {
-    return { level: 'good', title: 'Calibrated',
+  /* Ready, or counting every pass on enough evidence to mean it. A single
+   * lucky lap is not a calibrated gate, and saying so on one pass would be the
+   * same over-claim in the other direction. */
+  if (cal.ready || (cal.verdict === 'good' && cal.seen >= MIN_PASSES)) {
+    return { level: 'good', title: cal.ready ? 'Calibrated' : 'Counting every pass',
              detail: `Trigger ${fmt(threshold)}, set from the laps you flew.` };
   }
   /* Evidence exists and it is not good. Falling through to "calibrating" here
@@ -91,7 +94,13 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true, ca
                detail: `${cal.seen} passes seen and none of them would be timed. ` +
                        'Keep flying — the trigger is being corrected.' };
     }
-    if (cal.verdict === 'some missed' || cal.verdict === 'fragile') {
+    if (cal.verdict === 'fragile') {
+      /* Every pass counted. Calling that "missing some passes" tells a pilot
+       * whose gate is working that it is not. */
+      return { level: 'warn', title: 'Margin is thin',
+               detail: 'Every pass counted, but only just. A weaker one would be missed.' };
+    }
+    if (cal.verdict === 'some missed') {
       return { level: 'warn', title: 'Missing some passes',
                detail: 'Not every crossing would be timed yet. A few more laps.' };
     }

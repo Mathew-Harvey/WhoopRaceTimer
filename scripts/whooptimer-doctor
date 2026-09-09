@@ -228,10 +228,14 @@ elif [ "$FAILED" = 1 ]; then
   bold "Finished with problems."
 elif [ "$CHANGED" = 1 ]; then
   bold "Done."
-  [ "$RESTART_BROWSER" = 1 ] && \
-    echo "  Quit Chrome/Chromium completely and reopen it — launch flags are read once, at startup."
 else
   bold "Nothing needed changing."
+fi
+# Outside the chain: a run that fixed speech and then failed to install BlueZ
+# still needs the browser restarted, and hiding that behind the failure made
+# the half that worked look like it had not.
+if [ "$CHECK_ONLY" != 1 ] && [ "$RESTART_BROWSER" = 1 ]; then
+  echo "  Quit Chrome/Chromium completely and reopen it — launch flags are read once, at startup."
 fi
 [ "$FAILED" = 1 ] && echo "  Some steps failed; the lines marked ✗ above say which." && exit 1
 exit 0

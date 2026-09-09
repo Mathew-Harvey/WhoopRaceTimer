@@ -444,6 +444,19 @@ class App {
     this.logRecord(rec);
     switch (rec.type) {
       case 'passing':
+        /* A sweep leaves the slot enabled on its real trigger and hops it
+         * across forty frequencies while a quad is held a metre away, so the
+         * timer genuinely reports crossings as it passes through that quad's
+         * video. They are artefacts of the sweep, not laps. Guarding only the
+         * sampled path left them feeding readiness, and worse: three of them
+         * reached the auto-tune threshold, which writes the pilot's channel
+         * back to the receiver in the middle of the sweep — every remaining
+         * frequency then measured on the wrong channel — and could satisfy the
+         * coach into announcing calibration and starting a solo race. */
+        if (rec.slot === this.scanning) {
+          this.logLine(`passing on slot ${rec.slot} ignored: that receiver is being swept`);
+          break;
+        }
         if (rec.slot) {
           /* Sound it before anything else in this handler. The whole value of
            * the beep is that it lands with the quad, and it is the one thing
@@ -633,8 +646,13 @@ class App {
     /* The clock for "this receiver has heard nothing" starts when the pilot is
      * first told to fly, not when the page loaded. */
     this._calibFrom ||= Date.now();
-    /* Mid-race is not the time to be told to fly practice laps. */
+    /* Mid-race is not the time to be told to fly practice laps. Nor is the
+     * middle of a channel sweep: the receiver is hopping across forty
+     * frequencies, so nothing it reports means what it usually means, and
+     * announcing "timing is live" — which in solo starts the race — while the
+     * pilot is still working out what channel they are on is simply wrong. */
     if (this.race.state === 'running' || this.race.state === 'staging') return;
+    if (this.scanning != null) return;
     const solo = this.mode === 'solo' || racing.length === 1;
     const line = this.calCoach.update({
       solo,
@@ -756,7 +774,14 @@ class App {
        * explicit choice goes out with a provisional level, which self-tuning
        * replaces within a few laps. */
       const known = cfg.threshold ?? hw.threshold ?? null;
-      const threshold = known ?? (this.touched[slot] ? PROVISIONAL_THRESHOLD : null);
+      /* And only to move a receiver that is on the wrong frequency, which is
+       * the deadlock this exists for. Writing it to change an enable flag put a
+       * made-up level over whatever the receiver was really using, and once the
+       * timer echoes that back there is nothing left to recover the original
+       * from — permanently, on a slot whose owner has switched self-tuning off
+       * and so has nothing to correct it. */
+      const moving = hw.frequency != null && hw.frequency !== rf.frequency;
+      const threshold = known ?? (this.touched[slot] && moving ? PROVISIONAL_THRESHOLD : null);
       if (threshold == null) { settled.push(slot); continue; }
       const want = {
         slot, band: rf.band, channel: rf.channel, frequency: rf.frequency,

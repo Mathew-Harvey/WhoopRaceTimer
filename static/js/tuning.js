@@ -542,6 +542,9 @@ const VIDEO_BW_MHZ = 20;
 const TIE_MARGIN = 0.25;
 /* Which label to prefer when the radio genuinely cannot tell. */
 const BAND_PREFERENCE = ['R', 'F', 'E', 'A', 'B'];
+/* How far above the noise a reading has to stand before it is a transmitter
+ * rather than a quiet channel having a good day. */
+const SIGNAL_LIFT = 150;
 
 /* Below this many passes there is no way to tell an unusual lap from a badly
  * placed gate, so every pass counts. At or above it, the single worst one stops
@@ -768,6 +771,47 @@ export class ChannelScanner {
    * channel is handed back so the screen can offer them rather than quietly
    * deciding on the pilot's behalf.
    */
+  /**
+   * Every distinct transmitter the sweep can see, strongest first.
+   *
+   * The sweep used to answer "which channel read loudest", which is only the
+   * right question when there is one thing transmitting. Put a second quad, or
+   * anyone else's video, in the same room and the loudest reading is whichever
+   * happened to be nearer — a real sweep had 5740 beating the pilot's own quad
+   * at 5917 by thirty-eight counts, and reported a channel 177 MHz from the one
+   * their goggles showed.
+   *
+   * So: find everything standing clear of the noise, group readings that are
+   * within a video bandwidth of each other into one signal, and hand back all
+   * of them. Two transmitters is not an error to be resolved by arithmetic, it
+   * is a question only the pilot can answer.
+   */
+  static signals(results) {
+    const seen = results.filter(r => (r.samples ?? 2) >= 1);
+    if (!seen.length) return [];
+    const peaks = seen.map(r => r.peak).sort((a, b) => a - b);
+    const median = peaks[Math.floor(peaks.length / 2)];
+    const loud = seen.filter(r => r.peak - median > SIGNAL_LIFT)
+                     .sort((a, b) => a.freq - b.freq);
+    const groups = [];
+    for (const r of loud) {
+      const g = groups[groups.length - 1];
+      if (g && r.freq - g[g.length - 1].freq <= VIDEO_BW_MHZ) g.push(r);
+      else groups.push([r]);
+    }
+    const rank = r => { const i = BAND_PREFERENCE.indexOf(r.band ?? r.name[0]); return i < 0 ? 99 : i; };
+    return groups.map(g => {
+      const top = [...g].sort((a, b) => b.peak - a.peak)[0];
+      /* Within one signal the label is a choice, not a measurement: pick the
+       * one a pilot's goggles are likely to show. */
+      const near = g.filter(r => top.peak - r.peak <= (top.peak - median) * TIE_MARGIN);
+      const pick = [...near].sort((a, b) => rank(a) - rank(b) || b.peak - a.peak)[0] || top;
+      return { ...pick, peak: top.peak, median, lift: top.peak - median,
+               alsoCalled: g.filter(r => r.name !== pick.name),
+               span: [g[0].freq, g[g.length - 1].freq] };
+    }).sort((a, b) => b.peak - a.peak);
+  }
+
   static best(results) {
     const seen = results.filter(r => (r.samples ?? 2) >= 1);
     if (!seen.length) return null;

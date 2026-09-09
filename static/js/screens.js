@@ -1396,7 +1396,31 @@ SCREENS.findChannel = (app, slot) => {
           'Power-cycle it and reconnect; your channel is put back automatically. Then scan again.'));
         return;
       }
+      const use = name => () => {
+        app.setPilot(slot, { channel: name });
+        store.save('channelPicked', true);
+        toast(`Slot ${slot} set to ${name}`, 'ok');
+        close();
+      };
+      const found = ChannelScanner.signals(results);
       const best = ChannelScanner.best(results);
+      /* More than one transmitter in the room is not an error and not something
+       * the arithmetic can settle: the loudest is whichever is nearer, which on
+       * a real sweep meant reporting a channel 177 MHz from the one the pilot's
+       * goggles showed. Ask. */
+      if (found.length > 1) {
+        status.textContent = '';
+        mount(result, h('div.note', { 'data-tone': 'warn' },
+          h('strong', `${found.length} transmitters are on the air`),
+          'Only you know which one is yours — check your goggles. Everything else here ' +
+          'is somebody else’s video, or a quad left switched on.',
+          h('div.act', ...found.map(sgn => h('button', { class: sgn === found[0] ? 'go' : 'ghost',
+            onclick: use(sgn.name) },
+            `${sgn.name} · ${sgn.freq}`,
+            sgn.alsoCalled.length ? h('span.cap', { style: { marginLeft: '6px' } },
+                                      'or ' + sgn.alsoCalled.map(a => a.name).join('/')) : null)))));
+        return;
+      }
       if (!best || !best.confident) {
         status.textContent = 'No channel stood out.';
         mount(result, h('div.note', { 'data-tone': 'warn' },
@@ -1407,12 +1431,6 @@ SCREENS.findChannel = (app, slot) => {
         return;
       }
       status.textContent = '';
-      const use = name => () => {
-        app.setPilot(slot, { channel: name });
-        store.save('channelPicked', true);
-        toast(`Slot ${slot} set to ${name}`, 'ok');
-        close();
-      };
       /* Channels closer together than a video signal is wide cannot be told
        * apart by a sweep — R8 and E7 are eight megahertz apart and one quad
        * lights up both. Offering the alternatives is the honest thing: the

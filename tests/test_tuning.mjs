@@ -63,6 +63,29 @@ function sweep(overrides) {
   eq('still confident', b.confident, true);
 }
 
+/* Two transmitters in one room, from a real flight: the pilot's whoop on R8,
+ * and somebody else's video on F1 reading thirty-eight counts stronger. Taking
+ * the loudest reported a channel 177 MHz from the one their goggles showed, and
+ * the receiver spent the flight listening to the wrong one. */
+{
+  const found = ChannelScanner.signals(sweep({ F1: 2387, R8: 2349, E7: 2346 }));
+  eq('both transmitters are found', found.length, 2);
+  eq('the loudest is still reported first', found[0].name, 'F1');
+  eq('and the pilot’s quad is not swallowed by it', found[1].name, 'R8');
+  eq('with its other label offered', found[1].alsoCalled.map(r => r.name).join(), 'E7');
+  check('they are not merged into one signal', found[0].freq !== found[1].freq, 'grouped wrongly');
+}
+
+/* One transmitter is still one answer, however wide its skirts. */
+{
+  const found = ChannelScanner.signals(sweep({ R8: 2400, E7: 2380, E6: 1400 }));
+  eq('overlapping readings are one signal', found.length, 1);
+  eq('named the way a pilot would', found[0].name, 'R8');
+}
+
+/* A quiet room has nothing to offer. */
+eq('silence is no signals', ChannelScanner.signals(sweep({})).length, 0);
+
 {
   /* A genuine E-band signal, nothing near it, is not dragged to Raceband. */
   const b = ChannelScanner.best(sweep({ E4: 2400 }));

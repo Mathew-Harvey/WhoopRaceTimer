@@ -115,6 +115,11 @@ class App {
         this.restored = true;
         this.recomputeSessionBest();
         this.screen = this.mode === 'solo' ? 'fly' : 'race';
+        /* start() is the only place that asks for this, and a restored race
+         * never goes through it. The phone then locks mid-race and, as the
+         * comment beside start() says, the Bluetooth link goes with the
+         * screen — silent missing laps on a race the app has just restored. */
+        if (this.prefs.keepAwake) this.wake.request().catch(() => {});
       }
     }
   }
@@ -450,7 +455,12 @@ class App {
     try { await this.link?.disconnect(); } catch (e) {}
     this.link?.detach();
     this.link = null; this.linkKind = null;
-    this.screen = 'connect';
+    /* A running race keeps its screen. Sending a phone to the connect screen
+     * mid-race leaves no touch route back — the menu is gated on being
+     * connected, and the only way back is an instruction to press Esc, which a
+     * phone cannot do — while the sheet that offered the disconnect has just
+     * said laps by hand still count. */
+    if (!this.race.active) this.screen = 'connect';
     this.render();
   }
 
@@ -1271,7 +1281,13 @@ class App {
     /* A sheet owns the keyboard while it is open: Space on its focused Cancel
      * must cancel, not stop the race behind it. */
     if (sheetOpen()) return;
-    const onSession = this.link && (this.screen === 'fly' || this.screen === 'race');
+    /* The same condition the session screen itself is drawn under. Gating the
+     * keyboard on a link alone meant that in exactly the two states the app
+     * puts in writing — a race restored after a reload, and a deliberate
+     * disconnect mid-race — the screen appeared and its keys did nothing,
+     * while the confirm sheet had just promised laps by hand still count. */
+    const onSession = (this.link || this.race.active) &&
+                      (this.screen === 'fly' || this.screen === 'race');
     if (k >= '1' && k <= '4') { if (onSession) { this.manualLap(Number(k)); e.preventDefault(); } return; }
     if (k === ' ') {
       if (!onSession) return;

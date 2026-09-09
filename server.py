@@ -145,6 +145,20 @@ class Bridge:
                     dead.append(q)
             for q in dead:
                 self.clients.remove(q)
+                # Removing it from the list is not enough: its handler is still
+                # blocked on the queue and will go on sending keep-alives to a
+                # subscription that can never deliver another record. The page
+                # sees an EventSource that never errors, so it reports a healthy
+                # link and flies a whole session on it. Wake the handler so it
+                # closes the response instead.
+                try:
+                    q.get_nowait()          # make room for the sentinel
+                except queue.Empty:
+                    pass
+                try:
+                    q.put_nowait(None)      # _sse breaks out on None
+                except queue.Full:
+                    pass
 
     def on_raw(self, data):
         self.broadcast({"type": "rx", "b64": base64.b64encode(data).decode()})
@@ -257,7 +271,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.flush()
             while True:
                 try:
-                    self.wfile.write(f"data: {q.get(timeout=15)}\n\n".encode())
+                    item = q.get(timeout=15)
+                    # None is the sentinel broadcast() leaves when it has given
+                    # up on this client. Closing here is the only way the page
+                    # learns: an EventSource that is merely unsubscribed keeps
+                    # receiving keep-alives and never fires onerror.
+                    if item is None:
+                        break
+                    self.wfile.write(f"data: {item}\n\n".encode())
                 except queue.Empty:
                     self.wfile.write(b": ping\n\n")
                 self.wfile.flush()

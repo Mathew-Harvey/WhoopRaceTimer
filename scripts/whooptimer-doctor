@@ -202,9 +202,17 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 if command -v rfkill >/dev/null 2>&1; then
-  if rfkill list bluetooth 2>/dev/null | grep -qi "soft blocked: yes"; then
+  BT_RFKILL="$(rfkill list bluetooth 2>/dev/null)"
+  if printf '%s' "$BT_RFKILL" | grep -qi "hard blocked: yes"; then
+    # rfkill cannot clear a hardware block, and reporting "not blocked" for one
+    # put a tick directly above the failure it causes.
+    bad "the adapter is blocked by a hardware switch — rfkill cannot clear that"
+    info "find the physical wireless switch or key on this machine"
+    FAILED=1
+  elif printf '%s' "$BT_RFKILL" | grep -qi "soft blocked: yes"; then
     bad "the adapter is soft-blocked"
-    if run rfkill unblock bluetooth; then CHANGED=1; else FAILED=1; fi
+    if [ "$CHECK_ONLY" = 1 ]; then run rfkill unblock bluetooth
+    elif run rfkill unblock bluetooth; then CHANGED=1; else FAILED=1; fi
   else
     ok "the adapter is not blocked"
   fi
@@ -215,6 +223,7 @@ if command -v bluetoothctl >/dev/null 2>&1; then
     ok "an adapter is present and powered"
   else
     bad "no powered adapter — check the hardware switch, or run: bluetoothctl power on"
+    FAILED=1
   fi
 fi
 

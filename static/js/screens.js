@@ -465,6 +465,7 @@ SCREENS.fly = app => {
 
     stats.last.set(p.last == null ? '—' : fmt2(p.last));
     stats.best.set(p.best == null ? '—' : fmt2(p.best), p.best != null ? 'purple' : null);
+    stats.consec.label(`Best ${app.settings.consecN}`);
     stats.consec.set(fmtOrDash(p.bestConsecutive(app.settings.consecN)));
     stats.laps.set(String(p.lapCount));
     stats.session.set(clockStr(r.elapsed));
@@ -519,8 +520,14 @@ function setPrimary(btn, glyph, label, cls) {
 
 function statCell(label) {
   const v = h('div.v.num', '—');
+  const cap = h('div.cap', label);
   return {
-    node: h('div.stat', v, h('div.cap', label)),
+    node: h('div.stat', v, cap),
+    /* The consecutive-lap caption names a number the pilot can change while
+     * this cell is on screen, and the value beside it is recomputed every
+     * frame — so a caption fixed at build time described the old N over a
+     * figure calculated with the new one. */
+    label: text => { if (cap.textContent !== text) cap.textContent = text; },
     set: (text, tone) => {
       if (v.textContent !== text) v.textContent = text;
       if (tone) { if (v.dataset.tone !== tone) v.dataset.tone = tone; }

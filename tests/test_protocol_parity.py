@@ -56,6 +56,13 @@ def build_vectors():
                 "getRfSetup": laprf.get_rf_setup().hex(),
                 "setMinLapTime": laprf.set_min_lap_time(3000).hex(),
                 "getRtcTime": laprf.get_rtc_time().hex(),
+                # Both were unpinned while the app came to depend on them: the
+                # status rate is what makes any signal arrive at all, and the
+                # gate state is what arms a timer that came up idle. A one-sided
+                # edit to either would have passed this suite.
+                "setStatusInterval": laprf.set_status_interval(200).hex(),
+                "setGateStateActive": laprf.set_gate_state(True).hex(),
+                "setGateStateIdle": laprf.set_gate_state(False).hex(),
             },
             "channels": [{"name": n, "freq": f} for n, f in laprf.ALL_CHANNELS]}
 
@@ -82,6 +89,9 @@ for (const [name, expected] of Object.entries(V.encode)) {
     getRfSetup: m.getRfSetup(),
     setMinLapTime: m.setMinLapTime(3000),
     getRtcTime: m.getRtcTime(),
+    setStatusInterval: m.setStatusInterval(200),
+    setGateStateActive: m.setGateState(m.GATE.active),
+    setGateStateIdle: m.setGateState(m.GATE.idle),
   }[name]);
   checks++;
   if (got !== expected) fail.push(`encode ${name}\n  py ${expected}\n  js ${got}`);

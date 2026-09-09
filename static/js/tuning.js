@@ -232,6 +232,9 @@ export class Calibration {
 /* ------------------------------------------------------- signal tracking --- */
 
 const HISTORY_S = 90;
+/* Where in a window's readings the noise floor sits. Low, because the question
+ * is how quiet a receiver gets, not how quiet it is on average. */
+const QUIET_QUANTILE = 0.2;
 
 /** Per-slot RSSI history, held in *delta above a measured baseline* so a small
  *  real change is visible. Also the software fallback detector, for a unit that
@@ -259,15 +262,25 @@ export class SlotSignal {
     while (this.history.length && this.history[0].t < cut) this.history.shift();
   }
 
-  /** The recent quiet level: the median of the last `windowS` seconds. Unlike
-   *  the instantaneous value, a quad passing the gate does not move it — which
-   *  matters, because a verdict that says "can never detect a lap" every time a
-   *  lap is actually detected is worse than no verdict. */
-  quiet(windowS = 10) {
+  /**
+   * The recent quiet level: a low percentile of the last `windowS` seconds.
+   *
+   * It was the median, which assumes the gate is clear more than half the time.
+   * On a micro track it is not — a whoop laps every few seconds and is near the
+   * timer for much of any ten-second window. A real flight had 35% of its
+   * readings above 1500 with a true floor of 959, and the windowed median put
+   * quiet at around 2000. Everything downstream is measured from that number,
+   * so the trigger was placed at 2579 when passes peak at 2943, and the timer
+   * reported no crossings at all while the app called the gate calibrated.
+   *
+   * A low percentile answers the question actually being asked — how quiet does
+   * this receiver get — rather than how quiet it is on average.
+   */
+  quiet(windowS = 15) {
     const cut = (this.lastAt || Date.now() / 1000) - windowS;
     const vals = this.history.filter(h => h.t >= cut).map(h => h.v).sort((a, b) => a - b);
     if (!vals.length) return null;
-    return vals[Math.floor(vals.length / 2)];
+    return vals[Math.floor((vals.length - 1) * QUIET_QUANTILE)];
   }
 
   /** Freeze the current quiet level as the baseline. Median ignores a stray spike. */
@@ -544,6 +557,23 @@ const BAND_PREFERENCE = ['R', 'F', 'E', 'A', 'B'];
 /* How far above the noise a reading has to stand before it is a transmitter
  * rather than a quiet channel having a good day. */
 const SIGNAL_LIFT = 150;
+/* The bands pilots actually fly. A reading that lands in one of the others is
+ * almost always the same transmitter seen off-centre — the tables overlap far
+ * more finely than a video signal is wide — so it is reported under the label
+ * the pilot's goggles will be showing. E7 at 5925 is R8 at 5917 eight megahertz
+ * away; nobody is flying E7. */
+const PILOT_BANDS = ['R', 'F'];
+
+/** Report a signal under a band a pilot would recognise, when one is close
+ *  enough to be the same transmitter. */
+function foldToPilotBand(pick) {
+  const band = pick.band ?? pick.name[0];
+  if (PILOT_BANDS.includes(band)) return pick;
+  const near = laprf.ALL_CHANNELS
+    .filter(c => PILOT_BANDS.includes(c.band) && Math.abs(c.freq - pick.freq) <= VIDEO_BW_MHZ)
+    .sort((a, b) => Math.abs(a.freq - pick.freq) - Math.abs(b.freq - pick.freq))[0];
+  return near ? { ...pick, name: near.name, freq: near.freq, band: near.band, ch: near.ch } : pick;
+}
 
 /* Below this many passes there is no way to tell an unusual lap from a badly
  * placed gate, so every pass counts. At or above it, the single worst one stops
@@ -804,10 +834,12 @@ export class ChannelScanner {
       /* Within one signal the label is a choice, not a measurement: pick the
        * one a pilot's goggles are likely to show. */
       const near = g.filter(r => top.peak - r.peak <= (top.peak - median) * TIE_MARGIN);
-      const pick = [...near].sort((a, b) => rank(a) - rank(b) || b.peak - a.peak)[0] || top;
+      const chosen = [...near].sort((a, b) => rank(a) - rank(b) || b.peak - a.peak)[0] || top;
+      const pick = foldToPilotBand(chosen);
+      const others = g.filter(r => r.name !== pick.name && r.name !== chosen.name);
+      if (pick.name !== chosen.name) others.unshift(chosen);
       return { ...pick, peak: top.peak, median, lift: top.peak - median,
-               alsoCalled: g.filter(r => r.name !== pick.name),
-               span: [g[0].freq, g[g.length - 1].freq] };
+               alsoCalled: others, span: [g[0].freq, g[g.length - 1].freq] };
     }).sort((a, b) => b.peak - a.peak);
   }
 

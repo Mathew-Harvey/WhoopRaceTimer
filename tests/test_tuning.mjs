@@ -76,6 +76,22 @@ function sweep(overrides) {
   check('they are not merged into one signal', found[0].freq !== found[1].freq, 'grouped wrongly');
 }
 
+/* Pilots fly Raceband and Fatshark. The channel tables overlap far more finely
+ * than a video signal is wide, so a reading that lands in another band is the
+ * same transmitter seen off-centre — and reporting E7 to a pilot whose goggles
+ * say R8 is reporting a channel nobody flies. */
+{
+  const only = ChannelScanner.signals(sweep({ E7: 2400 }));
+  eq('an E-band reading is reported as its Raceband equivalent', only[0].name, 'R8');
+  eq('at the Raceband frequency', only[0].freq, 5917);
+  eq('with the measured label still offered', only[0].alsoCalled.map(r => r.name).join(), 'E7');
+}
+{
+  /* Folding must not touch a band pilots actually use. */
+  eq('an F-band signal is left alone', ChannelScanner.signals(sweep({ F1: 2400 }))[0].name, 'F1');
+  eq('and so is Raceband', ChannelScanner.signals(sweep({ R4: 2400 }))[0].name, 'R4');
+}
+
 /* One transmitter is still one answer, however wide its skirts. */
 {
   const found = ChannelScanner.signals(sweep({ R8: 2400, E7: 2380, E6: 1400 }));

@@ -1415,6 +1415,14 @@ SCREENS.findChannel = (app, slot) => {
                                       'or ' + sgn.alsoCalled.map(a => a.name).join('/')) : null)))));
         return;
       }
+      /* One signal still goes through the same grouping, so it is reported under
+       * a band a pilot flies. The confidence check stays on the raw picker: it
+       * is asking whether anything stood out at all, which folding does not
+       * change. */
+      if (found.length === 1 && best && best.confident) {
+        const only = found[0];
+        best.name = only.name; best.freq = only.freq; best.alsoCalled = only.alsoCalled;
+      }
       if (!best || !best.confident) {
         status.textContent = 'No channel stood out.';
         mount(result, h('div.note', { 'data-tone': 'warn' },

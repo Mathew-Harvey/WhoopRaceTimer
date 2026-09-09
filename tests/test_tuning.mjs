@@ -8,7 +8,7 @@
  *
  *   node tests/test_tuning.mjs
  */
-import { Calibration, SlotSignal, passReport, derive } from '../static/js/tuning.js';
+import { Calibration, SlotSignal, passReport, derive, gateHealth } from '../static/js/tuning.js';
 import { viewBytes } from '../static/js/link.js';
 import { ChannelScanner } from '../static/js/tuning.js';
 import { ALL_CHANNELS, splitRecords, decodeRecord } from '../static/js/laprf.js';
@@ -168,6 +168,54 @@ function sweep(overrides) {
   const rows = await sc.sweepRange(1, 5910, 5920, 2);
   eq('a retired link measures nothing', rows.length, 0);
   eq('and says so', sc.lost, true);
+}
+
+/* --------------------------------------------------------- gate health --- */
+/* What every screen shows about a receiver, and what the pre-race checks refuse
+ * to start on. It had no coverage at all while its verdict ladder was rewritten
+ * twice in a day. */
+{
+  const base = { threshold: 1600, floor: null, ceiling: null, live: 960 };
+
+  eq('a slot nobody is racing is not a problem',
+     gateHealth({ ...base, enabled: false }).level, 'off');
+  eq('a trigger the timer has not reported is unknown',
+     gateHealth({ ...base, threshold: null }).level, 'unknown');
+
+  /* The gate that can never fire, and the one verdict that must always win. */
+  const under = gateHealth({ ...base, threshold: 700, live: 962 });
+  eq('a trigger under the noise is fatal', under.fatal, true);
+  check('even when the flown laps say otherwise',
+        gateHealth({ ...base, threshold: 700, live: 962,
+                     cal: { ready: true, seen: 9, verdict: 'good' } }).fatal === true,
+        'readiness overrode a gate that physically cannot report a lap');
+
+  /* Calibrated by flying. */
+  const flown = gateHealth({ ...base, cal: { ready: true, seen: 5, verdict: 'good' } });
+  eq('flown laps calibrate a gate', flown.level, 'good');
+  check('and it says where the trigger came from', /flew/.test(flown.detail), flown.detail);
+
+  /* Stale bounds from a wizard run days ago must not overrule laps flown now —
+   * that combination reported "trigger is above the strongest pass" seconds
+   * after the app had announced the gate calibrated. */
+  const stale = gateHealth({ threshold: 1560, floor: 900, ceiling: 1300, live: 900,
+                             cal: { ready: true, seen: 6, verdict: 'good' } });
+  eq('flown laps outrank stale wizard bounds', stale.level, 'good');
+
+  /* A gate that has stopped counting laps must never be described as merely
+   * still calibrating: the gate screen hides that level entirely. */
+  const missing = gateHealth({ ...base, cal: { ready: false, seen: 6, verdict: 'some missed' } });
+  eq('a gate missing passes warns', missing.level, 'warn');
+  const none = gateHealth({ ...base, cal: { ready: false, seen: 6, verdict: 'all missed' } });
+  eq('a gate counting nothing is bad', none.level, 'bad');
+  check('and neither is hidden as "calibrating"',
+        missing.level !== 'learning' && none.level !== 'learning', 'a dead gate said nothing');
+
+  /* Too little evidence is still just calibrating — that is not a fault. */
+  eq('a fresh receiver is calibrating',
+     gateHealth({ ...base, cal: { ready: false, seen: 1, verdict: 'good' } }).level, 'learning');
+  eq('and so is one that has flown nothing',
+     gateHealth({ ...base, cal: { ready: false, seen: 0, verdict: 'none' } }).level, 'learning');
 }
 
 /* ------------------------------------------------------------- ceiling --- */

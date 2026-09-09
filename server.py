@@ -88,7 +88,13 @@ class Bridge:
                                             on_raw=self.on_raw,
                                             on_log=lambda m: self.log(f"[node] {m}"))
             self.rh.start()
-            use_usb = False
+            # Exclusive against BOTH LapRF paths, not just the serial one. They
+            # share a fan-out and the page cannot tell two timers apart: every
+            # crossing would be counted twice, on one slot, at two different
+            # signal scales, and the handshake would go to whichever transport
+            # ranks higher — so the node would never be told the app's threshold
+            # or minimum lap and would keep its own.
+            use_usb = use_ble = False
         elif rh_port:
             self.log(f"[node] unavailable: {RH_ERROR}")
 
@@ -114,20 +120,24 @@ class Bridge:
 
     @property
     def transport(self):
-        if self.ble and self.ble.connected:
-            return "bluetooth"
+        # The node first, because it is only ever present when it was explicitly
+        # asked for. Bluetooth is switched off in that case, but ranking it above
+        # the node as well means no ordering accident can route the handshake to
+        # a LapRF that happens to be powered on in the same room.
         if self.rh and self.rh.connected:
             return "rotorhazard"
+        if self.ble and self.ble.connected:
+            return "bluetooth"
         if self.usb and self.usb.connected:
             return "usb"
         return None
 
     @property
     def detail(self):
-        if self.ble and self.ble.connected:
-            return f"{self.ble.detail or 'LapRF'} over Bluetooth"
         if self.rh and self.rh.connected:
             return self.rh.detail
+        if self.ble and self.ble.connected:
+            return f"{self.ble.detail or 'LapRF'} over Bluetooth"
         if self.usb and self.usb.connected:
             return f"{self.usb.detail} over USB"
         return ""
@@ -140,11 +150,25 @@ class Bridge:
             "detail": self.detail,
             "mode": ("binary" if t in ("bluetooth", "rotorhazard")
                      else "ascii" if t == "usb" else None),
-            "reason": None if t else (
-                "No timer. Switch it on — a LapRF only advertises for about a minute "
-                "after power-on." if blemod else
-                f"Bluetooth is unavailable here ({BLE_ERROR}); install bleak."),
+            "reason": None if t else self._reason(),
         }
+
+    def _reason(self):
+        """Why there is no timer — about the hardware actually being used.
+
+        A node is opt-in and exclusive, so when one was asked for there is no
+        LapRF in the picture at all, and telling someone to check a LapRF's
+        advertising window or its battery is advice about equipment they have
+        said they are not using.
+        """
+        if self.rh:
+            return ("No RotorHazard node. Check it is plugged in and powered, and that "
+                    "this user is in the dialout group. The bridge log names every port "
+                    "it tried and why each was refused.")
+        if not blemod:
+            return f"Bluetooth is unavailable here ({BLE_ERROR}); install bleak."
+        return ("No timer. Switch it on — a LapRF only advertises for about a minute "
+                "after power-on.")
 
     # ---- fan-out ----
     def subscribe(self):
@@ -195,11 +219,11 @@ class Bridge:
 
     # ---- transmit ----
     def send(self, data):
-        if self.ble and self.ble.connected and self._ble_loop:
-            asyncio.run_coroutine_threadsafe(self.ble.send(data), self._ble_loop)
-            return True
         if self.rh and self.rh.connected:
             self.rh.send(data)
+            return True
+        if self.ble and self.ble.connected and self._ble_loop:
+            asyncio.run_coroutine_threadsafe(self.ble.send(data), self._ble_loop)
             return True
         if self.usb and self.usb.connected:
             self.usb.send(data)
@@ -358,8 +382,9 @@ def main():
                     metavar="PORT",
                     help="use a RotorHazard node instead of a LapRF, translated so "
                          "the page sees a LapRF. Give a port, or nothing to search "
-                         "for one. Disables the LapRF serial transport, which would "
-                         "otherwise open the same port.")
+                         "for one. Exclusive: both LapRF transports are switched "
+                         "off, because the page cannot tell two timers apart and "
+                         "would count every crossing twice.")
     ap.add_argument("--open", action="store_true", help="open a browser on start")
     a = ap.parse_args()
     host = a.host or ("0.0.0.0" if a.lan else "127.0.0.1")

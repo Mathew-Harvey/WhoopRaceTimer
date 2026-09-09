@@ -235,6 +235,11 @@ class Bridge:
                 self.usb.stop()
         except Exception:
             pass
+        try:
+            if self.rh:
+                self.rh.stop()
+        except Exception:
+            pass
 
 
 class Handler(http.server.BaseHTTPRequestHandler):

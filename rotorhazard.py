@@ -40,6 +40,7 @@ two floors up and leaves the app's constants meaning exactly what they meant.
 It is one number, here, and nothing above it needs to know.
 """
 import struct
+import threading
 import time
 
 import laprf
@@ -309,15 +310,21 @@ class RotorHazardNode:
         self._recent = []               # last few raw readings, for the median
         self._baseline = None           # settled noise, for judging a reported lap
         self._filtered_log = []         # (when, filtered value), recent only
+        # Built here rather than in start(): send() takes it, and a caller that
+        # sends before starting would otherwise meet a None.
+        self._lock = threading.Lock()
 
     # ---- lifecycle ----
     def start(self):
-        import threading
-        self._lock = threading.Lock()
         threading.Thread(target=self._run, daemon=True).start()
 
     def stop(self):
         self._stop = True
+        try:
+            if self._ser:
+                self._ser.close()
+        except Exception:
+            pass
 
     def _run(self):
         while not self._stop:

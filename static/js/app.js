@@ -534,7 +534,20 @@ class App {
        * too high otherwise reports nothing at all, which looks exactly like
        * nobody having flown yet. */
       const pass = this.sig.get(slot).observe(this.thresholdFor(slot), this.rfFor(slot).floor);
-      if (pass) this.rejectBleed(slot, pass);
+      if (!pass) continue;
+      this.rejectBleed(slot, pass);
+      /* Correct the trigger from what the watcher saw, not only from what the
+       * timer reported.
+       *
+       * Self-tuning used to run from passing records alone, and a passing
+       * record is precisely what a trigger set too high does not produce — so
+       * the correction depended on the signal that the misconfiguration
+       * suppresses, and a gate that was wrong stayed wrong for the whole
+       * flight. A receiver holding a stale level from a previous session, which
+       * survives in the timer's own config and is adopted as fact on connect,
+       * could never recover. The sampled stream keeps working whatever the
+       * trigger is, which is exactly why it has to be the one that drives this. */
+      this.autoTune(slot);
     }
   }
 

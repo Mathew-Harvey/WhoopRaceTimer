@@ -160,6 +160,40 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   check('and both sit clear of the noise', open > quiet + 120, `open ${open}`);
 }
 
+/* --------------------------------------- a wrong gate must be able to recover --- */
+/* A trigger set too high produces no passing records, and self-tuning used to
+ * run from passing records alone — so the correction depended on the signal the
+ * misconfiguration suppresses, and a gate that was wrong stayed wrong. This is a
+ * real flight's numbers: a stale trigger of 2579 carried in the timer's own
+ * config, against passes peaking between 1670 and 2698. */
+{
+  const quiet = 936;
+  const flown = [2292, 2229, 2227, 2373, 1670, 2598, 2698];
+  let threshold = 2579.3;
+  const passes = [];
+  let moves = 0;
+  for (const peak of flown) {
+    passes.push({ peak, quiet, counted: peak >= threshold, at: 0 });
+    const r = readiness(passes, threshold, 0.62);
+    if (passes.length >= 3 && r.worthIt && r.verdict !== 'good' && r.verdict !== 'none') {
+      threshold = r.suggest; moves++;
+      for (const p of passes) p.counted = p.peak >= threshold;
+    }
+  }
+  check('a stale high trigger is corrected', moves > 0, 'the gate never moved');
+  check('down, not up', threshold < 2579.3, `ended at ${threshold}`);
+  /* Every pass except the anomalously weak one. 1670 sits a thousand counts
+   * below the rest of that flight, and designing the gate around it is exactly
+   * the tail-chasing the outlier trimming exists to stop — so it is expected to
+   * miss, and expected to be reported as an outlier rather than a fault. */
+  const detected = passes.filter(p => p.peak >= threshold).length;
+  eq('every pass but the outlier is detected', detected, flown.length - 1);
+  const rep = readiness(passes, threshold, 0.62);
+  eq('and the outlier is not held against the gate', rep.realMissed, 0);
+  eq('it is named as one', rep.outliers, 1);
+  check('while staying clear of the noise', threshold > quiet + 120, `threshold ${threshold}`);
+}
+
 /* ------------------------------------------------- calibration terminates --- */
 /* The failure this guards against was reported from the air: "the pickups kept
  * getting better and better, but it never said it was completed."

@@ -258,7 +258,13 @@ function applySuggestion(app, slot, sig, rep) {
   app.saveRf(slot, { threshold: rep.suggest });
   app.pushConfig([slot], { now: true });
   sig.rejudge(rep.suggest);       // the laps still count as evidence; the verdicts change
-  toast(`Slot ${slot} trigger set to ${Math.round(rep.suggest)} — fly it again to confirm`, 'ok');
+  /* Config writes are refused while a session is running, so saying the trigger
+   * was set — and re-judging the history to "all detected" — described
+   * something that had not happened to the receiver. */
+  const held = app.race.state === 'running' || app.race.state === 'staging';
+  toast(held
+    ? `Slot ${slot} set to ${Math.round(rep.suggest)} — reaches the timer when the session ends`
+    : `Slot ${slot} trigger set to ${Math.round(rep.suggest)} — fly it again to confirm`, 'ok');
   app.markStructural();
 }
 
@@ -1011,9 +1017,22 @@ SCREENS.gate = app => {
           ...SLOTS.map(slot => h('label', { style: { display: 'flex', gap: '6px',
             alignItems: 'center' } }, h('span.cap', 'S' + slot),
           h('input', { type: 'number', min: '0', max: '63', style: { width: '80px' },
-            value: app.rfFor(slot).gain ?? 58,
-            onchange: e => { app.saveRf(slot, { gain: Number(e.target.value) });
-                             app.pushConfig([slot], { now: true }); } }))))),
+            /* What the receiver is actually on, not a constant. It showed 58
+             * while the timer ran at whatever it reported, so a pilot nudging
+             * "58" to 60 was moving a number that was never there. */
+            value: app.rfFor(slot).gain ?? app.timer.rfSetup[slot]?.gain ?? 58,
+            onchange: e => {
+              const v = Number(e.target.value);
+              /* An empty box is not a request for gain zero, which is what
+               * Number('') writes — and zero is not nullish, so it survives
+               * every fallback and silences the receiver. */
+              if (!e.target.value.trim() || !isFinite(v) || v < 0 || v > 63) {
+                e.target.value = String(app.rfFor(slot).gain ?? app.timer.rfSetup[slot]?.gain ?? 58);
+                return;
+              }
+              app.saveRf(slot, { gain: v });
+              app.pushConfig([slot], { now: true });
+            } }))))),
       h('div.row',
         h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
           h('span.cap', 'Slot'),
@@ -1134,7 +1153,11 @@ SCREENS.gate = app => {
       const quiet = cfg.floor ?? sig?.quiet() ?? null;
       const lastPass = sig?.passes?.length ? sig.passes[sig.passes.length - 1].peak
                                            : (cfg.ceiling ?? null);
-      const key = `${Math.round(live)}|${Math.round(quiet ?? -1)}|${Math.round(lastPass ?? -1)}`;
+      /* Live-ness in the key: when a receiver stops reporting, sig.value and
+       * every other input stop changing too, so the row froze showing the last
+       * good reading instead of the dash that says it has gone quiet. */
+      const key = `${Math.round(live)}|${Math.round(quiet ?? -1)}|${Math.round(lastPass ?? -1)}` +
+                  `|${app.sig.live(slot) ? 1 : 0}`;
       if (ref.readout._t !== key) {
         ref.readout._t = key;
         mount(ref.readout,
@@ -1249,7 +1272,16 @@ function applyCalibration(app) {
   /* Only slots that produced a usable measurement change. A receiver whose
    * quad did not fly the pass keeps last week's good bounds rather than being
    * downgraded to "too weak" by a measurement that was never made. */
-  for (const u of usable) app.saveRf(u.slot, { floor: u.floor, ceiling: u.ceiling, threshold: u.suggested });
+  for (const u of usable) {
+    app.saveRf(u.slot, { floor: u.floor, ceiling: u.ceiling, threshold: u.suggested });
+    /* The wizard is the fourth path that moves a trigger, and the only one that
+     * did not re-judge against it. Lowering a stale level left every stored
+     * pass marked missed, so a gate that had just been fixed by hand reported
+     * "No laps detected" — and the next lap's self-tuning overwrote the level
+     * the pilot had deliberately applied. Raising one left them marked counted,
+     * printing an impossible negative margin. */
+    app.sig.get(u.slot)?.rejudge(u.suggested);
+  }
   if (!usable.length) { toast('Nothing to apply — no receiver saw a separable pass', 'err'); return; }
   if (!app.canControl) { toast('Saved, but there is no control link to write it', 'err'); return; }
   app.pushConfig(usable.map(u => u.slot), { now: true });

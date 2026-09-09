@@ -257,6 +257,10 @@ export class SlotSignal {
     t = t ?? Date.now() / 1000;
     this.value = value;
     this.lastAt = t;
+    /* Here as well as on arrival: a receiver that has stopped hearing anything
+     * records no passes, so trimming only when one lands would keep the last
+     * good evidence forever — which is the exact case this exists for. */
+    if (this.passes.length) this._trimPasses(t);
     this.history.push({ t, v: value });
     const cut = t - HISTORY_S;
     while (this.history.length && this.history[0].t < cut) this.history.shift();
@@ -364,8 +368,24 @@ export class SlotSignal {
                    margin: threshold == null ? null
                          : Math.round((done.peak - threshold) * 10) / 10 };
     this.passes.push(pass);
-    while (this.passes.length > PASS_HISTORY) this.passes.shift();
+    this._trimPasses(t);
     return pass;
+  }
+
+  /**
+   * Forget evidence that has gone stale.
+   *
+   * A twelve-deep ring trimmed only by depth remembers laps for as long as the
+   * page is open. So a receiver that goes deaf after being calibrated — a quad
+   * swapped to another band, a VTX switched off, the timer moved — keeps the
+   * passes that made it ready, and every surface in the app goes on saying the
+   * gate is calibrated while the clock counts up and nothing lands. Age is the
+   * only thing that can tell "calibrated" from "was calibrated once".
+   */
+  _trimPasses(now) {
+    const cut = (now ?? this.lastAt ?? 0) - PASS_MAX_AGE_S;
+    while (this.passes.length && this.passes[0].at < cut) this.passes.shift();
+    while (this.passes.length > PASS_HISTORY) this.passes.shift();
   }
 
   /**
@@ -392,7 +412,7 @@ export class SlotSignal {
     const pass = { peak, at, quiet, counted: true,
                    margin: Math.round((peak - threshold) * 10) / 10, source: 'timer' };
     this.passes.push(pass);
-    while (this.passes.length > PASS_HISTORY) this.passes.shift();
+    this._trimPasses(at);
     return pass;
   }
 
@@ -433,6 +453,10 @@ const WATCH_FRACTION = 0.34, WATCH_MIN_RISE = 60;
  * line reports a pass on every sample. */
 const PASS_EXIT_FRACTION = 0.7;
 const PASS_HISTORY = 12;
+/* How long a flown pass still says anything about the gate. Long enough to
+ * survive a pilot landing between heats, short enough that a receiver which has
+ * gone deaf stops claiming to be calibrated. */
+const PASS_MAX_AGE_S = 180;
 
 /**
  * What the passes seen so far say about a trigger, in one sentence and one
@@ -483,8 +507,10 @@ export function passReport(passes, threshold, fraction = PRESETS[DEFAULT_PRESET]
   const suggest = weakest - quiet > MIN_SPAN
     ? Math.round((quiet + (weakest - quiet) * fraction) * 10) / 10
     : null;
+  /* The worst miss, which is what "missed by up to" means and what a pilot
+   * needs; this took the smallest shortfall and reported it as the largest. */
   const worstMiss = missed
-    ? Math.round(Math.min(...passes.filter(p => !p.counted).map(p => threshold - p.peak)) * 10) / 10
+    ? Math.round(Math.max(...passes.filter(p => !p.counted).map(p => threshold - p.peak)) * 10) / 10
     : 0;
   /* A gate can count every pass and still be wrong. A trigger sitting just
    * under the weakest peak counts today and misses tomorrow, when the battery

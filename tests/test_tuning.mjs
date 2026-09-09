@@ -8,7 +8,7 @@
  *
  *   node tests/test_tuning.mjs
  */
-import { Calibration, SlotSignal, passReport, derive, gateHealth } from '../static/js/tuning.js';
+import { Calibration, SlotSignal, passReport, derive, gateHealth, readiness } from '../static/js/tuning.js';
 import { viewBytes } from '../static/js/link.js';
 import { ChannelScanner } from '../static/js/tuning.js';
 import { ALL_CHANNELS, splitRecords, decodeRecord } from '../static/js/laprf.js';
@@ -209,6 +209,27 @@ eq('silence is no signals', ChannelScanner.signals(sweep({})).length, 0);
   eq('and says so', sc.lost, true);
 }
 
+/* ------------------------------------------------------ evidence expires --- */
+/* A receiver that goes deaf after being calibrated — quad swapped to another
+ * band, VTX off, timer moved — records no new passes, so evidence trimmed only
+ * by depth keeps the ones that made it ready. Every surface then says the gate
+ * is calibrated while the clock counts up and nothing lands. */
+{
+  const sig = new SlotSignal(1);
+  let t = 1000;
+  for (const v of [960, 1500, 2400, 1800, 960]) { t += 0.2; sig.add(v, t); sig.observe(1600, 960, t); }
+  for (const v of [960, 1500, 2400, 1800, 960]) { t += 0.2; sig.add(v, t); sig.observe(1600, 960, t); }
+  for (const v of [960, 1500, 2400, 1800, 960]) { t += 0.2; sig.add(v, t); sig.observe(1600, 960, t); }
+  check('laps just flown are evidence', sig.passes.length >= 3, `only ${sig.passes.length}`);
+  eq('and the gate is calibrated', readiness(sig.passes, 1600, 0.42).ready, true);
+
+  /* Now the receiver hears nothing at all for several minutes. */
+  for (let i = 0; i < 60; i++) { t += 5; sig.add(959, t); }
+  eq('stale evidence is forgotten', sig.passes.length, 0);
+  eq('so the gate stops claiming to be calibrated', readiness(sig.passes, 1600, 0.42).ready, false);
+  eq('and it reads as having seen nothing', readiness(sig.passes, 1600, 0.42).seen, 0);
+}
+
 /* --------------------------------------------------------- gate health --- */
 /* What every screen shows about a receiver, and what the pre-race checks refuse
  * to start on. It had no coverage at all while its verdict ladder was rewritten
@@ -385,6 +406,15 @@ function watch(values, threshold, quiet = 960, dt = 0.2) {
   const { sig } = watch([960, 1500, 2400, 1000, 960], 1600);
   const r = passReport(sig.passes, 1600);
   eq('all clear reads as good', r.verdict, 'good');
+}
+
+/* "Missed by up to X" has to be the worst miss. It reported the smallest
+ * shortfall, so a gate missing a pass by 900 counts said it missed by 40. */
+{
+  const quiet = 960;
+  const p = v => ({ peak: v, quiet, counted: false, at: 0 });
+  const r = passReport([p(1560), p(700), p(2400)].map(x => ({ ...x, counted: x.peak >= 1600 })), 1600);
+  eq('the worst miss is reported, not the least', r.worstMiss, 900);
 }
 
 eq('no passes reads as none', passReport([], 1600).verdict, 'none');

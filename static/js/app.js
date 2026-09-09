@@ -39,6 +39,14 @@ const BLEED_WINDOW_S = 0.6, BLEED_RATIO = 1.25;
  * and only until a flown lap replaces it. */
 const PROVISIONAL_THRESHOLD = 1600;
 
+/* How many times to tell a timer to arm itself before treating its refusal as
+ * the fault it is. */
+const ARM_TRIES = 5;
+
+/* A trigger goes out as a 32-bit float and comes back rounded. Anything inside
+ * this is the same number; an exact comparison would rewrite the slot forever. */
+const THRESHOLD_EPSILON = 0.5;
+
 
 
 class App {
@@ -280,7 +288,13 @@ class App {
       try {
         await link.reconnect();
         this.connecting = null;
-        this.markStructural();
+        /* Through adoptLink, not around it. Returning here skipped every reset
+         * a fresh connect performs — the write-retry counters above all, so a
+         * slot that had hit its cap stayed capped, and silently, because it had
+         * already used its one warning. The app tells the pilot to power-cycle
+         * and reconnect; that is exactly the moment the timer would have
+         * accepted the write, and exactly the moment nothing was sent. */
+        this.adoptLink(link, kind);
         return;
       } catch (err) {
         this.connecting = null;
@@ -504,8 +518,22 @@ class App {
    * watches. Silence is the one thing this app must never present as normal.
    */
   onGateState(state) {
-    if (state === this.timer.gateState) return;
+    const repeat = state === this.timer.gateState;
     this.timer.gateState = state;
+    /* An idle timer is re-armed on every report until it says otherwise, not
+     * once on the first. Nothing acknowledges a write — the transport resolves
+     * a send whose _write threw — so a single fire-and-forget frame that did
+     * not land left a six-second toast and then a whole session against a gate
+     * that was not timing. Bounded, because a unit that refuses to arm is a
+     * fault to report rather than a thing to keep shouting at. */
+    if (state === laprf.GATE.idle && this.canControl) {
+      if ((this._armTries = (this._armTries || 0) + 1) <= ARM_TRIES) {
+        this.logLine(`timer idle — arming (attempt ${this._armTries})`);
+        this.link.send(laprf.setGateState(laprf.GATE.active));
+      }
+    }
+    if (state !== laprf.GATE.idle) this._armTries = 0;
+    if (repeat) return;
     /* The first report counted for nothing, which hid the one state that
      * matters most: a timer that comes up idle is not looking for crossings at
      * all. It reports signal, accepts a threshold, echoes it back, and reports
@@ -519,7 +547,6 @@ class App {
       /* Arming it is the whole remedy, and the protocol has a record for
        * exactly this. Nothing here has ever sent one. */
       toast('The timer was idle — arming it', 'err', 6000);
-      if (this.canControl) this.link.send(laprf.setGateState(laprf.GATE.active));
     }
     this.markStructural();
   }
@@ -746,7 +773,17 @@ class App {
     }
     /* The user chose this slot's channel here: that wins — but only now that
      * the timer has said what it holds, and only if it actually differs. */
-    if (mine !== rec.frequency || (rec.enabled !== undefined && !!rec.enabled !== wantEnabled)) {
+    /* Frequency and enabled alone said "it took" for a frame whose threshold the
+     * timer never accepted, so the app went on showing and judging against a
+     * level the receiver was not using — a correct "cannot detect a lap" turned
+     * into "Gate calibrated". Compared with a tolerance because the level goes
+     * out as f32 and comes back rounded; an exact test would never match and
+     * would rewrite the slot forever. */
+    const wantThr = this.rfFor(slot).threshold;
+    const thrDiffers = wantThr != null && rec.threshold != null &&
+                       Math.abs(rec.threshold - wantThr) > THRESHOLD_EPSILON;
+    if (mine !== rec.frequency || thrDiffers ||
+        (rec.enabled !== undefined && !!rec.enabled !== wantEnabled)) {
       this.pushConfig([slot]);
     } else delete this._writeTries[slot];        // it took: the next change starts fresh
   }
@@ -871,6 +908,15 @@ class App {
   }
 
   saveRf(slot, patch) {
+    /* Passes measured at one amplification say nothing about another. The
+     * bounds below were already dropped for this reason; the evidence they sit
+     * beside was not, so a gain change left a gate "calibrated" on laps flown
+     * at a gain it is no longer using. */
+    const cur0 = this.rf[slot] || {};
+    const effGain = cur0.gain ?? this.timer.rfSetup[slot]?.gain;
+    if (patch.gain != null && effGain != null && Number(patch.gain) !== Number(effGain)) {
+      this.sig.get(slot).clearPasses();
+    }
     const cur = (this.rf[slot] ||= {});
     /* Bounds were measured at a particular gain. Change the gain and the noise
      * floor and pass peak both move; keeping the old numbers would make the
@@ -1078,6 +1124,12 @@ class App {
                      'Connect over Bluetooth to time laps.',
                action: this.caps.bluetooth
                  ? { label: 'Bluetooth', fn: () => this.connect('bluetooth') } : null };
+    }
+    if (this.timer.gateState === laprf.GATE.idle && this._armTries > ARM_TRIES) {
+      return { tone: 'bad',
+               text: 'The timer says it is idle and will not arm — it is not looking for ' +
+                     'crossings. Power-cycle it.',
+               action: { label: 'Reconnect', fn: () => this.reconnect() } };
     }
     const fatal = this.race.racing.filter(p => this.health(p.slot).fatal);
     if (fatal.length) {

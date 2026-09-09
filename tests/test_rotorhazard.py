@@ -311,6 +311,40 @@ eq("a write to a slot that does not exist changes nothing", fake.freq, 5658)
 node._apply({"type": "rfSetup", "slot": 1, "frequency": 5917, "threshold": 1600.0})
 eq("and a write to the one that does, does", fake.freq, 5917)
 
+# A receiver the app has switched off must stop producing laps. A node has no
+# such switch, so it is honoured here — otherwise a pilot who is not racing
+# collects laps.
+emitted = []
+node = wire(rh.RotorHazardNode(on_raw=emitted.append, on_log=lambda m: None), FakeSerial())
+node._frequency = 5658
+for _ in range(80):
+    node._filtered(40)
+for v in [90, 150, 200, 210, 190]:
+    node._filtered(v)
+def laps(frames):
+    """Only the passings — describing a slot emits a record too."""
+    return [f for f in frames
+            if laprf.decode_record(laprf.unescape(f))["type"] == "passing"]
+
+
+def a_pass():
+    return rh.LapStats(bytes([1]) + (0).to_bytes(2, "big") + bytes([40, 210, 210])
+                       + (1000).to_bytes(2, "big") + bytes(8))
+
+
+emitted.clear()
+node._apply({"type": "rfSetup", "slot": 1, "enabled": 0})
+off = laprf.decode_record(laprf.unescape(
+    [f for f in emitted if laprf.decode_record(laprf.unescape(f))["type"] == "rfSetup"][0]))
+eq("the app is told the slot is off", off["enabled"], 0)
+emitted.clear()
+node._emit_pass(a_pass())
+eq("a switched-off receiver reports no laps", len(laps(emitted)), 0)
+node._apply({"type": "rfSetup", "slot": 1, "enabled": 1})
+node._min_lap_s = 0.0
+node._emit_pass(a_pass())
+eq("and a switched-on one does", len(laps(emitted)), 1)
+
 # ---- inbound that never resolves -------------------------------------------
 # A page sending something malformed, or a frame truncated by a dropped
 # connection, leaves bytes that will never form a record. Held forever they

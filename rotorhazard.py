@@ -305,6 +305,7 @@ class RotorHazardNode:
         self._frequency = None
         self._enter = None
         self._exit = None
+        self._enabled = True            # the app can switch a slot off; a node cannot
         self._pending = bytearray()     # inbound LapRF bytes from the browser
         self._lock = None
         self._recent = []               # last few raw readings, for the median
@@ -456,6 +457,8 @@ class RotorHazardNode:
         here instead. Anything else would make the same setting mean two
         different things depending on which timer is plugged in.
         """
+        if not self._enabled:
+            return
         now = time.time()
         peak = st.pass_peak or st.node_peak or st.rssi
         # The node counts a lap for its own re-tune artefact, because the
@@ -524,6 +527,11 @@ class RotorHazardNode:
         if kind == "rfSetup":
             if rec.get("slot", NODE_SLOT) != NODE_SLOT:
                 return              # there is no such receiver here
+            if rec.get("enabled") is not None:
+                # A node has no switch, so honour it here: a receiver the app has
+                # turned off must stop producing laps, or a pilot who is not
+                # racing collects them.
+                self._enabled = bool(rec["enabled"])
             if rec.get("frequency"):
                 self._set_frequency(int(rec["frequency"]))
             if rec.get("threshold") is not None:
@@ -548,7 +556,7 @@ class RotorHazardNode:
         if self._frequency is None:
             return
         thr = to_laprf_rssi(self._enter if self._enter is not None else 0)
-        self.on_raw(rf_setup_record(self._frequency, thr, slot=slot))
+        self.on_raw(rf_setup_record(self._frequency, thr, slot=slot, enabled=self._enabled))
 
     def _set_frequency(self, mhz):
         if mhz == self._frequency:

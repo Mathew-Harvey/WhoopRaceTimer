@@ -118,6 +118,18 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   has('and it is a channel problem', line, 'video channel');
 }
 
+/* A quad switched off is not a gate drifting. Telling someone who has just
+ * landed to keep flying is the wrong instruction; the evidence expired because
+ * the receiver stopped hearing anything. */
+{
+  const { c } = coach();
+  c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 0 }] });
+  c.update({ solo: true, slots: [{ ...slot(1, 3, 3, true), silentFor: 0 }] });
+  const line = c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 5 }] });
+  has('a silent receiver is reported as such', line, 'No signal');
+  check('and not as a gate that needs more laps', !/keep flying/i.test(line), line);
+}
+
 /* Nothing is said to a disconnected timer or an empty grid. */
 {
   const { c } = coach();

@@ -34,7 +34,11 @@ export const DEFAULT_SETTINGS = {
   minLap: 3.0,
   holeshot: false,
   countdown: 5,
-  timerMinLapMs: 3000,
+  /* The timer discards a crossing this soon after the last one. Three seconds
+   * is longer than a whole lap on a micro track — a real flight had seven of
+   * ten laps thrown away by it — and a pass is over in well under a second, so
+   * this only has to be long enough not to count one crossing twice. */
+  timerMinLapMs: 1000,
   preset: 'normal',
 };
 

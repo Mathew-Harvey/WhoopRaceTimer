@@ -70,6 +70,15 @@ export class CalibrationCoach {
       if (slots.some(s => !s.ready)) {
         this.phase = 'briefed';
         this.doneSlots = new Set(slots.filter(s => s.ready).map(s => s.slot));
+        /* Evidence expiring because the receiver stopped hearing anything is
+         * not the same as a gate drifting, and "keep flying" is the wrong
+         * instruction to give someone who has just landed or switched off. */
+        if (slots.every(s => s.seen === 0)) {
+          for (const s of slots) this.saidFor[s.slot] = 0;
+          this.silentSaid.clear();
+          return this._speak(solo ? 'No signal. Check the quad is powered and on channel.'
+                                  : 'No signal from any quad. Check they are powered.');
+        }
         /* Take the laps already flown as read. Without this the very next
          * update follows "needs calibrating again" with a progress line about
          * the same laps, which is the phone talking to itself. */

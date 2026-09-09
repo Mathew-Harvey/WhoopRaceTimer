@@ -487,6 +487,8 @@ class App {
            * trigger — it is the only fully trustworthy peak we ever see. */
           this.sig.get(rec.slot).recordHardwarePass(
             rec.peakHeight ?? null, this.thresholdFor(rec.slot), this.rfFor(rec.slot).floor);
+          this._reported = this._reported || {};
+          this._reported[rec.slot] = (this._reported[rec.slot] || 0) + 1;
           this.race.onPassing(rec.slot, undefined, rec.rtcTime ?? null);
           this.autoTune(rec.slot);
           this.coachCalibration();
@@ -586,6 +588,7 @@ class App {
        * could never recover. The sampled stream keeps working whatever the
        * trigger is, which is exactly why it has to be the one that drives this. */
       this.autoTune(slot);
+      this.checkMinLap(slot);
     }
   }
 
@@ -679,6 +682,43 @@ class App {
         if (pass.peak >= q.peak * BLEED_RATIO) os.dropPass(q);
       }
     }
+  }
+
+  /**
+   * Notice laps the timer is throwing away for being too soon.
+   *
+   * The LapRF discards a crossing that arrives within its minimum lap time of
+   * the last one, and that setting is written from here. Three seconds is
+   * shorter than a lap almost anywhere except a micro track, where it is
+   * longer — a real flight cleared the trigger seven times in half a minute and
+   * had one lap recorded, with the gate armed, the level correct and the signal
+   * plainly crossing it. Nothing on screen could have explained that, because
+   * from the app's side a suppressed lap and an undetected one look identical.
+   *
+   * The watcher can tell them apart: it sees the crossing whatever the timer
+   * decides to do about it.
+   */
+  checkMinLap(slot) {
+    if (this._minLapWarned) return;
+    const cleared = this.sig.get(slot).passes.filter(p => p.counted);
+    if (cleared.length < 4) return;
+    /* The timer is keeping up: nothing to explain. */
+    if ((this._reported?.[slot] || 0) >= cleared.length - 1) return;
+    const gaps = [];
+    for (let i = 1; i < cleared.length; i++) gaps.push(cleared[i].at - cleared[i - 1].at);
+    gaps.sort((a, b) => a - b);
+    const typical = gaps[Math.floor(gaps.length / 2)];
+    const minLap = (Number(this.settings.timerMinLapMs) || 0) / 1000;
+    if (!minLap || typical >= minLap) return;
+    this._minLapWarned = true;
+    const want = Math.max(400, Math.floor(typical * 1000 * 0.5 / 100) * 100);
+    toast(`Laps are about ${typical.toFixed(1)}s but the timer discards anything under ` +
+          `${minLap.toFixed(1)}s, so most are being thrown away. Lowering it to ` +
+          `${want} ms.`, 'err', 10000);
+    this.saveSettings({ timerMinLapMs: want });
+    this.pushConfig([slot], { now: true });
+    this.voice.say('Laps are faster than the minimum lap time. Lowering it.');
+    this.markStructural();
   }
 
   /** How calibrated a receiver is, in the terms the coach and the screen use. */

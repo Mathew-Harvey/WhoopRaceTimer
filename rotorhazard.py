@@ -307,7 +307,6 @@ class RotorHazardNode:
         self._stop = True
 
     def _run(self):
-        import threading  # noqa: F401  (imported for symmetry with start)
         while not self._stop:
             try:
                 self._open()
@@ -564,17 +563,28 @@ class RotorHazardNode:
 EXIT_BELOW_ENTER = 6
 
 
+#: The LapRF's own USB identity, from device.py. A port with this behind it is
+#: never probed: probing means writing a byte, and the byte would land in a
+#: LapRF's ASCII console.
+LAPRF_VID, LAPRF_PID = 0x04D8, 0x000A
+
+
 def find_node_port():
     """A serial port with a RotorHazard node behind it.
 
-    Deliberately does not guess from the USB id: a CH340 is on every third
-    hobby board. It asks, and only a correct revision reply counts.
+    Deliberately does not guess a node from its USB id — a CH340 is on every
+    third hobby board — but does use the id to rule one device out. Searching
+    means writing a command byte to each candidate, and a LapRF's USB endpoint
+    is a console that takes typed commands, so it is skipped by identity rather
+    than spoken to and judged on its reply.
     """
     try:
         from serial.tools import list_ports
     except Exception:
         return None
     for p in list_ports.comports():
+        if (p.vid, p.pid) == (LAPRF_VID, LAPRF_PID):
+            continue
         if probe_port(p.device):
             return p.device
     return None

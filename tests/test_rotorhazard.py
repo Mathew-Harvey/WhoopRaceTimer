@@ -11,7 +11,6 @@ is a test result rather than a claim.
 import os
 import subprocess
 import sys
-import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import laprf          # noqa: E402
@@ -327,6 +326,14 @@ src = open(os.path.join(root if 'root' in dir() else
                         "device.py")).read()
 check("the LapRF serial path does not search ttyUSB", "/dev/ttyUSB" not in src,
       "it would open a RotorHazard node and read LapRF records out of it")
+
+# Searching for a node means writing a byte to each candidate port, and a LapRF's
+# USB endpoint is a console that takes typed commands. It is ruled out by its USB
+# identity rather than spoken to.
+eq("the LapRF's USB id is the one this refuses to probe",
+   (rh.LAPRF_VID, rh.LAPRF_PID), (0x04D8, 0x000A))
+check("and device.py agrees on it", "0x04D8" in src.upper().replace("0X", "0x")
+      or "0x04d8" in src, "the two files disagree about what a LapRF is")
 
 # ---- a node that stops answering -------------------------------------------
 # A poll that fails must end the connection rather than stream silence: the page

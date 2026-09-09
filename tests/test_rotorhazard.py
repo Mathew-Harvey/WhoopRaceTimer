@@ -290,6 +290,70 @@ for _ in range(80):
 node._emit_pass(stats(240))                  # and a node insisting on a lap
 eq("a lap with a high reported peak but no rise is refused", len(emitted), 0)
 
+# ---- refusing what it is not -----------------------------------------------
+# The safety property that matters on a bench with two timers on it: this must
+# never adopt a LapRF, and the LapRF serial path must never adopt a node.
+class Mute:
+    """A serial device that answers nothing — a LapRF's console, or a dead port."""
+    def reset_input_buffer(self): pass
+    def flush(self): pass
+    def close(self): pass
+    def write(self, data): pass
+    def read(self, n): return b""
+
+
+class WrongMarker(FakeSerial):
+    """Something that answers, but is not a node."""
+    def write(self, data):
+        if data[0] == rh.READ_REVISION_CODE:
+            self._reply(b"\x99\x01")       # no RotorHazard marker
+        else:
+            super().write(data)
+
+
+for name, fake in (("a silent device", Mute()), ("a device with another protocol", WrongMarker())):
+    node = wire(rh.RotorHazardNode(on_raw=lambda b: None, on_log=lambda m: None), fake)
+    rev = node._read(rh.READ_REVISION_CODE)
+    check(f"{name} is not mistaken for a node",
+          rev is None or rev[0] != rh.RotorHazardNode.REVISION_MARKER,
+          f"got {rev.hex() if rev else None}")
+
+# And the reverse, which is a property of the LapRF path rather than this one:
+# it looks only at ttyACM and usbmodem names, so a node on ttyUSB is invisible
+# to it. Checked here because this is where a second serial device arrived.
+import device as devmod  # noqa: E402
+src = open(os.path.join(root if 'root' in dir() else
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "device.py")).read()
+check("the LapRF serial path does not search ttyUSB", "/dev/ttyUSB" not in src,
+      "it would open a RotorHazard node and read LapRF records out of it")
+
+# ---- a node that stops answering -------------------------------------------
+# A poll that fails must end the connection rather than stream silence: the page
+# reports a healthy link off this transport's connected flag.
+class Dies(FakeSerial):
+    def __init__(self):
+        super().__init__()
+        self.alive = True
+
+    def write(self, data):
+        if not self.alive:
+            return
+        super().write(data)
+
+
+fake = Dies()
+node = wire(rh.RotorHazardNode(on_raw=lambda b: None, on_log=lambda m: None), fake)
+node.connected = True
+fake.alive = False
+raised = False
+try:
+    node._poll_forever()
+except OSError:
+    raised = True
+check("a node that stops answering ends the connection", raised,
+      "the poll loop carried on against a dead port")
+
 # ---- the promise -----------------------------------------------------------
 # The LapRF path is not modified by any of this, and that is checkable.
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

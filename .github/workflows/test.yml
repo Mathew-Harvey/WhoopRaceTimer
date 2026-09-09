@@ -19,3 +19,9 @@ jobs:
       - run: node tests/test_race_engine.mjs
       - run: node tests/test_tuning.mjs
       - run: node tests/test_calibrate.mjs
+      # The LapRF wire format, pinned so a second timer cannot quietly change it.
+      - run: python3 tests/test_laprf_golden.py
+      # The RotorHazard translator, driven against a node written in software so
+      # it runs where no node is plugged in.
+      - run: pip install pyserial
+      - run: python3 tests/test_rotorhazard.py

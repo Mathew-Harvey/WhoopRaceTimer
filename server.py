@@ -29,6 +29,11 @@ sys.path.insert(0, HERE)
 
 import device as devmod                                  # noqa: E402
 try:
+    import rotorhazard as rhmod
+except Exception as _e:                                 # pragma: no cover
+    rhmod = None
+    RH_ERROR = str(_e)
+try:
     import ble as blemod
     BLE_ERROR = None
 except Exception as _e:                                  # bleak missing or no stack
@@ -65,13 +70,27 @@ class Bridge:
     decides what it means.
     """
 
-    def __init__(self, port=None, use_ble=True, use_usb=True):
+    def __init__(self, port=None, use_ble=True, use_usb=True, rh_port=None):
         self.clients = []
         self.lock = threading.Lock()
         self.ble = None
         self._ble_loop = None
         self.usb = None
+        self.rh = None
         self.log_lines = []
+
+        # A RotorHazard node, translated into LapRF records so the page needs no
+        # knowledge of it. Opt-in and exclusive: it owns a serial port, and the
+        # LapRF serial transport would otherwise open the same one and read a
+        # different protocol out of it.
+        if rh_port and rhmod:
+            self.rh = rhmod.RotorHazardNode(port=None if rh_port == "auto" else rh_port,
+                                            on_raw=self.on_raw,
+                                            on_log=lambda m: self.log(f"[node] {m}"))
+            self.rh.start()
+            use_usb = False
+        elif rh_port:
+            self.log(f"[node] unavailable: {RH_ERROR}")
 
         if use_usb:
             self.usb = devmod.LapRFSerial(port=port, on_raw=self.on_raw,
@@ -97,6 +116,8 @@ class Bridge:
     def transport(self):
         if self.ble and self.ble.connected:
             return "bluetooth"
+        if self.rh and self.rh.connected:
+            return "rotorhazard"
         if self.usb and self.usb.connected:
             return "usb"
         return None
@@ -105,6 +126,8 @@ class Bridge:
     def detail(self):
         if self.ble and self.ble.connected:
             return f"{self.ble.detail or 'LapRF'} over Bluetooth"
+        if self.rh and self.rh.connected:
+            return self.rh.detail
         if self.usb and self.usb.connected:
             return f"{self.usb.detail} over USB"
         return ""
@@ -115,7 +138,8 @@ class Bridge:
             "available": t is not None,
             "transport": t,
             "detail": self.detail,
-            "mode": "binary" if t == "bluetooth" else "ascii" if t == "usb" else None,
+            "mode": ("binary" if t in ("bluetooth", "rotorhazard")
+                     else "ascii" if t == "usb" else None),
             "reason": None if t else (
                 "No timer. Switch it on — a LapRF only advertises for about a minute "
                 "after power-on." if blemod else
@@ -173,6 +197,9 @@ class Bridge:
     def send(self, data):
         if self.ble and self.ble.connected and self._ble_loop:
             asyncio.run_coroutine_threadsafe(self.ble.send(data), self._ble_loop)
+            return True
+        if self.rh and self.rh.connected:
+            self.rh.send(data)
             return True
         if self.usb and self.usb.connected:
             self.usb.send(data)
@@ -322,11 +349,18 @@ def main():
                          "network can open it")
     ap.add_argument("--no-ble", action="store_true", help="do not hold a Bluetooth link")
     ap.add_argument("--no-usb", action="store_true", help="do not open the serial port")
+    ap.add_argument("--rotorhazard", nargs="?", const="auto", default=None,
+                    metavar="PORT",
+                    help="use a RotorHazard node instead of a LapRF, translated so "
+                         "the page sees a LapRF. Give a port, or nothing to search "
+                         "for one. Disables the LapRF serial transport, which would "
+                         "otherwise open the same port.")
     ap.add_argument("--open", action="store_true", help="open a browser on start")
     a = ap.parse_args()
     host = a.host or ("0.0.0.0" if a.lan else "127.0.0.1")
 
-    bridge = Bridge(port=a.device, use_ble=not a.no_ble, use_usb=not a.no_usb)
+    bridge = Bridge(port=a.device, use_ble=not a.no_ble, use_usb=not a.no_usb,
+                    rh_port=a.rotorhazard)
     Handler.bridge = bridge
     threading.Thread(target=bridge.watch, daemon=True).start()
 

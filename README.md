@@ -299,6 +299,49 @@ oscillator rather than the announcer on purpose, because speech is synthesised
 and queued, and a callout that arrives a beat late says nothing about when the
 pass happened.
 
+## A RotorHazard node instead of a LapRF
+
+A home-built RotorHazard node can drive the app, and the app is not told. The
+browser speaks the LapRF protocol and only that; rather than teach it a second
+one — which would mean changing the transport layer, the gate maths and every
+constant tuned to a LapRF's signal scale — `rotorhazard.py` translates. A node
+goes in, LapRF records come out through the existing local bridge, and nothing
+above it knows the difference. The LapRF implementation is not modified, so it
+cannot break, and `tests/test_laprf_golden.py` pins its wire format to keep that
+true.
+
+```
+python3 server.py --rotorhazard              # find a node
+python3 server.py --rotorhazard /dev/ttyUSB0 # or name its port
+```
+
+Then open the address it prints. It disables the LapRF serial transport while
+it runs, because that would otherwise open the same port and read a different
+protocol out of it.
+
+Two protocols meet. RotorHazard is request/response — one command byte out, a
+fixed-size payload back, a one-byte checksum — and the node never speaks
+unprompted, so everything the app expects to be pushed at it is polled. The
+signal scale is 0-255 against a LapRF's ~900-3000; the measured noise floor on a
+real node was 58, and 58x16 is 928 against a LapRF's measured 935-960, so a
+factor of sixteen lines the two up and every constant in the app keeps meaning
+what it meant.
+
+The node earns something in return. A LapRF takes one trigger level; a node arms
+above one and disarms below another, so the app's trigger becomes the arm level
+and the disarm level sits just under it — the hysteresis a LapRF cannot be
+given.
+
+**The re-tune artefact.** A node's receiver re-tunes itself periodically, and the
+reading taken during it is invalid: measured at exactly one sample wide, 56-57
+counts above whatever the floor is, about eleven times in twenty seconds. It
+crosses the arm level on its own, and the node counts a lap for it. The
+translator polls far faster than it reports — twenty-five times a second against
+five — so a median of five erases an artefact while leaving a pass, which lasts
+about half a second and covers eleven samples, untouched. A lap the node reports
+is checked against the filtered signal before it is passed on: if that never
+rose, no quad went through.
+
 ## Setup check
 
 The page checks this machine on load and says nothing unless something is

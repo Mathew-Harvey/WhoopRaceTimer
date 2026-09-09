@@ -125,9 +125,16 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   const { c } = coach();
   c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 0 }] });
   c.update({ solo: true, slots: [{ ...slot(1, 3, 3, true), silentFor: 0 }] });
-  const line = c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 5 }] });
+  /* silentFor is large here because that is the only thing the real caller can
+   * produce: evidence expires after three minutes of silence, so by the time
+   * seen reaches zero the receiver has been quiet far longer than the silence
+   * threshold. The earlier value of 5 was unreachable, and it hid a second,
+   * contradictory line following the first on the very next tick. */
+  const line = c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 200 }] });
   has('a silent receiver is reported as such', line, 'No signal');
   check('and not as a gate that needs more laps', !/keep flying/i.test(line), line);
+  eq('and it is not followed by a second line saying it again',
+     c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 205 }] }), null);
 }
 
 /* Nothing is said to a disconnected timer or an empty grid. */

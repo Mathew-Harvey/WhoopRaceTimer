@@ -456,7 +456,7 @@ const PASS_HISTORY = 12;
 /* How long a flown pass still says anything about the gate. Long enough to
  * survive a pilot landing between heats, short enough that a receiver which has
  * gone deaf stops claiming to be calibrated. */
-const PASS_MAX_AGE_S = 180;
+export const PASS_MAX_AGE_S = 180;
 
 /**
  * What the passes seen so far say about a trigger, in one sentence and one

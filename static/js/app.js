@@ -370,6 +370,8 @@ class App {
     this.cal.cancel();
     this._calibFrom = null;
     this._autoAt = {};
+    this._reported = {};
+    this._minLapWarned = false;
     /* Nothing is written to the timer just because we connected. The link's
      * hello() asks it to describe itself; adoptRfSetup() then corrects only the
      * slots where our saved intent actually differs. Writing on connect is how
@@ -498,7 +500,7 @@ class App {
           this.sig.get(rec.slot).recordHardwarePass(
             rec.peakHeight ?? null, this.thresholdFor(rec.slot), this.rfFor(rec.slot).floor);
           this._reported = this._reported || {};
-          this._reported[rec.slot] = (this._reported[rec.slot] || 0) + 1;
+          (this._reported[rec.slot] = this._reported[rec.slot] || []).push(Date.now() / 1000);
           this.race.onPassing(rec.slot, undefined, rec.rtcTime ?? null);
           this.autoTune(rec.slot);
           this.coachCalibration();
@@ -710,10 +712,21 @@ class App {
    */
   checkMinLap(slot) {
     if (this._minLapWarned) return;
-    const cleared = this.sig.get(slot).passes.filter(p => p.counted);
+    /* Watcher passes only. recordHardwarePass keeps a timer-reported pass
+     * alongside the sampled excursion for the same crossing when the closing
+     * sample lands first, so mixing the two counts one crossing twice — which
+     * both defeats the comparison below and drags the gaps toward the spacing
+     * of the duplicates. A 0.3 s "lap time" would set a 400 ms minimum and
+     * invite the timer to count one real crossing twice. */
+    const cleared = this.sig.get(slot).passes.filter(p => p.counted && p.source !== 'timer');
     if (cleared.length < 4) return;
-    /* The timer is keeping up: nothing to explain. */
-    if ((this._reported?.[slot] || 0) >= cleared.length - 1) return;
+    /* The timer is keeping up: nothing to explain. Counted over the same window
+     * the evidence lives in — a lifetime tally against a 12-deep, 180-second
+     * list is permanently larger after a dozen laps, which switched this check
+     * off for good on anyone who had flown a normal track first. */
+    const since = (this.timer.lastRx || Date.now()) / 1000 - tuning.PASS_MAX_AGE_S;
+    const reported = (this._reported?.[slot] || []).filter(t => t >= since).length;
+    if (reported >= cleared.length - 1) return;
     const gaps = [];
     for (let i = 1; i < cleared.length; i++) gaps.push(cleared[i].at - cleared[i - 1].at);
     gaps.sort((a, b) => a - b);
@@ -722,11 +735,18 @@ class App {
     if (!minLap || typical >= minLap) return;
     this._minLapWarned = true;
     const want = Math.max(400, Math.floor(typical * 1000 * 0.5 / 100) * 100);
-    toast(`Laps are about ${typical.toFixed(1)}s but the timer discards anything under ` +
-          `${minLap.toFixed(1)}s, so most are being thrown away. Lowering it to ` +
-          `${want} ms.`, 'err', 10000);
-    this.saveSettings({ timerMinLapMs: want });
-    this.pushConfig([slot], { now: true });
+    toast(`Laps are about ${typical.toFixed(1)}s but anything under ${minLap.toFixed(1)}s is ` +
+          `being discarded. Lowering the minimum to ${want} ms.`, 'err', 10000);
+    /* Both minimums. The app has its own filter and it drops the same laps, so
+     * moving only the timer's leaves every one of them reported and then
+     * thrown away here instead. */
+    this.saveSettings({ timerMinLapMs: want, minLap: Math.min(this.settings.minLap, want / 1000) });
+    /* Sent here rather than through pushConfig. That path refuses to write
+     * while a race is running — which is the whole situation this exists for —
+     * and even outside one it only emits a min-lap frame as a side effect of an
+     * RF-setup write actually going out. This is a settings record, not per-slot
+     * config: it cannot disturb a frequency or a level mid-race. */
+    if (this.canControl) this.link.send(laprf.setMinLapTime(want));
     this.voice.say('Laps are faster than the minimum lap time. Lowering it.');
     this.markStructural();
   }

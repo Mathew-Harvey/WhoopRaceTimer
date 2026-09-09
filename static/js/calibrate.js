@@ -75,7 +75,12 @@ export class CalibrationCoach {
          * instruction to give someone who has just landed or switched off. */
         if (slots.every(s => s.seen === 0)) {
           for (const s of slots) this.saidFor[s.slot] = 0;
-          this.silentSaid.clear();
+          /* Marked as told, not cleared. Clearing armed the per-receiver silence
+           * line below to fire on the very next tick — evidence only expires
+           * after three minutes of silence, so silentFor is always past its
+           * threshold by then — and the pilot heard two different sentences
+           * about the same thing, back to back. */
+          for (const s of slots) this.silentSaid.add(s.slot);
           return this._speak(solo ? 'No signal. Check the quad is powered and on channel.'
                                   : 'No signal from any quad. Check they are powered.');
         }

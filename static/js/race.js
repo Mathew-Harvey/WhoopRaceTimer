@@ -84,7 +84,7 @@ export class Race {
     this.targetLaps = 5;
     this.targetSeconds = 120;
     this.consecN = 3;
-    this.minLap = 3.0;
+    this.minLap = 1.0;      // see DEFAULT_SETTINGS.minLap
     this.holeshot = false;
     this.countdown = 5;
     this.startedAt = null;

@@ -31,7 +31,11 @@ export const DEFAULT_SETTINGS = {
   targetLaps: 5,
   targetSeconds: 120,
   consecN: 3,
-  minLap: 3.0,
+  /* The app's own filter, which discards a lap that soon after the last one.
+   * It has to move with the timer's: lowering one and leaving the other at
+   * three seconds means the timer dutifully reports every crossing on a micro
+   * track and the race engine throws the same ones away. */
+  minLap: 1.0,
   holeshot: false,
   countdown: 5,
   /* The timer discards a crossing this soon after the last one. Three seconds

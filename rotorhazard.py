@@ -66,6 +66,13 @@ SIZES = {
     READ_EXIT_AT_LEVEL: 1,
 }
 
+#: One node is one receiver, and it is the first slot. A LapRF has eight and the
+#: app asks all four it races about themselves; answering for any but this one
+#: claims receivers that do not exist — the app would show four gates on one
+#: frequency, and a write aimed at the fourth would retune the first, so a pilot
+#: choosing their own channel would move somebody else's.
+NODE_SLOT = 1
+
 #: RotorHazard RSSI (0-255) to LapRF counts. See the module docstring: this is
 #: measured, not chosen — it puts the two noise floors on top of each other.
 RSSI_SCALE = 16
@@ -189,7 +196,7 @@ class LapStats:
 
 # ---- translation to LapRF records ------------------------------------------
 
-def status_record(rssi, *, slot=1, battery_mv=FAKE_BATTERY_MV, gate_active=True):
+def status_record(rssi, *, slot=NODE_SLOT, battery_mv=FAKE_BATTERY_MV, gate_active=True):
     """A LapRF status record carrying one node's signal.
 
     The app reads exactly three things out of these — the slot's last RSSI, the
@@ -203,7 +210,7 @@ def status_record(rssi, *, slot=1, battery_mv=FAKE_BATTERY_MV, gate_active=True)
     ])
 
 
-def passing_record(peak, number, *, slot=1, rtc_us=None):
+def passing_record(peak, number, *, slot=NODE_SLOT, rtc_us=None):
     """A LapRF passing record for a lap the node reported.
 
     rtcTime is in microseconds, as the puck sends it — the app divides by a
@@ -220,7 +227,7 @@ def passing_record(peak, number, *, slot=1, rtc_us=None):
     ])
 
 
-def rf_setup_record(frequency, threshold, *, slot=1, enabled=True, gain=FAKE_GAIN):
+def rf_setup_record(frequency, threshold, *, slot=NODE_SLOT, enabled=True, gain=FAKE_GAIN):
     """What the app is told when it asks a slot to describe itself."""
     band, channel = band_channel_for(frequency)
     return laprf.encode(laprf.RT_RF_SETUP, [
@@ -508,6 +515,8 @@ class RotorHazardNode:
         kind = rec.get("type")
 
         if kind == "rfSetup":
+            if rec.get("slot", NODE_SLOT) != NODE_SLOT:
+                return              # there is no such receiver here
             if rec.get("frequency"):
                 self._set_frequency(int(rec["frequency"]))
             if rec.get("threshold") is not None:

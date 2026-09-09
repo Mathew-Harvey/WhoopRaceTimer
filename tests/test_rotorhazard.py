@@ -289,6 +289,28 @@ for _ in range(80):
 node._emit_pass(stats(240))                  # and a node insisting on a lap
 eq("a lap with a high reported peak but no rise is refused", len(emitted), 0)
 
+# ---- one node is one receiver ----------------------------------------------
+# The app asks all four raced slots to describe themselves. Answering for more
+# than the one that exists claims receivers that do not — the app would show
+# four gates on a single frequency — and a write aimed at the fourth would
+# retune the first, so a pilot choosing their own channel moves somebody else's.
+seen = []
+node = wire(rh.RotorHazardNode(on_raw=seen.append, on_log=lambda m: None), FakeSerial())
+node._frequency, node._enter = 5658, 114
+for slot in (1, 2, 3, 4):
+    node._apply({"type": "rfSetup", "slot": slot})
+eq("only the slot that exists is described", len(seen), 1)
+eq("and it is the first", laprf.decode_record(laprf.unescape(seen[0]))["slot"], 1)
+
+# A write aimed at a slot that is not there must not move the one that is.
+fake = FakeSerial()
+node = wire(rh.RotorHazardNode(on_raw=lambda b: None, on_log=lambda m: None), fake)
+node._frequency = 5658
+node._apply({"type": "rfSetup", "slot": 3, "frequency": 5917, "threshold": 1600.0})
+eq("a write to a slot that does not exist changes nothing", fake.freq, 5658)
+node._apply({"type": "rfSetup", "slot": 1, "frequency": 5917, "threshold": 1600.0})
+eq("and a write to the one that does, does", fake.freq, 5917)
+
 # ---- inbound that never resolves -------------------------------------------
 # A page sending something malformed, or a frame truncated by a dropped
 # connection, leaves bytes that will never form a record. Held forever they

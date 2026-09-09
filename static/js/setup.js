@@ -73,8 +73,8 @@ export async function checkSetup(app) {
     problems.push({
       id: 'insecure',
       title: 'This page is not on a secure origin',
-      body: 'Bluetooth is refused outright on a plain-http page that is not localhost. ' +
-            'Nothing installed on this machine can change that — the address has to change.',
+      body: 'Bluetooth is refused on a plain-http page that is not localhost. No install ' +
+            'fixes this; the address has to change.',
       commands: [],
       hint: 'Open the https address, or run the local app and use the address it prints.',
     });
@@ -100,8 +100,8 @@ export async function checkSetup(app) {
       problems.push({
         id: 'no-radio',
         title: 'Bluetooth is switched off, or this machine has no adapter',
-        body: 'The browser can speak Bluetooth; the machine is not offering a radio to ' +
-              'speak it with. Usually the adapter is soft-blocked or the service is stopped.',
+        body: 'The browser supports Bluetooth; the machine is not offering an adapter. ' +
+              'Usually soft-blocked, or the service is stopped.',
         commands: c.linux
           ? ['rfkill unblock bluetooth', 'sudo systemctl enable --now bluetooth', 'bluetoothctl show']
           : [],
@@ -118,10 +118,9 @@ export async function checkSetup(app) {
       id: 'no-voices',
       title: 'This browser reports no speech voices',
       body: linuxChromium
-        ? 'On Linux a browser speaks through speech-dispatcher, and Chrome and Chromium ' +
-          'keep that behind a launch flag that is off by default — so the packages can be ' +
-          'installed and working while the browser still reports nothing. Both halves are ' +
-          'needed: the packages, and the flag.'
+        ? 'Linux browsers speak through speech-dispatcher. Chrome and Chromium keep it ' +
+          'behind a launch flag that is off by default, so the packages can be installed ' +
+          'and working while the browser reports none. Both are required.'
         : 'Lap times still appear on screen; they just will not be spoken. ' +
           (c.iOS ? 'On iOS, check the device is not in silent mode and that a voice is ' +
                    'installed under Accessibility → Spoken Content.'

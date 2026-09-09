@@ -216,7 +216,7 @@ eq('silence is no signals', ChannelScanner.signals(sweep({})).length, 0);
   /* Calibrated by flying. */
   const flown = gateHealth({ ...base, cal: { ready: true, seen: 5, verdict: 'good' } });
   eq('flown laps calibrate a gate', flown.level, 'good');
-  check('and it says where the trigger came from', /flew/.test(flown.detail), flown.detail);
+  check('and it says where the trigger came from', /flown laps/.test(flown.detail), flown.detail);
 
   /* Stale bounds from a wizard run days ago must not overrule laps flown now —
    * that combination reported "trigger is above the strongest pass" seconds

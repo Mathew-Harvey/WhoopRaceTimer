@@ -659,8 +659,7 @@ function raceSetup(app) {
        * is here only so the state is not a mystery. */
       kids.push(h('div.note',
         h('strong', `${plural(learning.length, 'receiver')} still calibrating`),
-        'Fly as normal — the first few laps set the trigger, and the app says when ' +
-        'it has settled.'));
+        'Fly as normal. The first laps set the trigger.'));
     }
     if (unknown.length) {
       kids.push(h('div.note', { 'data-tone': 'warn' },
@@ -669,7 +668,7 @@ function raceSetup(app) {
     }
     if (!kids.length) {
       kids.push(h('div.note', { 'data-tone': 'ok' },
-        h('strong', 'Gate calibrated'), 'Every racing receiver is seeing clean passes.'));
+        h('strong', 'Gate calibrated'), 'Every racing receiver is detecting passes.'));
     }
     mount(gateSummary, ...kids);
   };
@@ -1052,7 +1051,7 @@ SCREENS.gate = app => {
     if (done.length === racing.length) {
       mount(statusBox,
         h('h3', 'Gate calibrated'),
-        h('p.muted', 'Every racing receiver is seeing clean passes. Nothing here needs touching.'));
+        h('p.muted', 'Every racing receiver is detecting passes.'));
       return;
     }
     /* The same words that are spoken, so someone who heard it and then looked
@@ -1065,11 +1064,9 @@ SCREENS.gate = app => {
       : '';
     mount(statusBox,
       h('h3', seenAny ? 'Calibration laps in progress' : 'Set 25 mW, then fly'),
-      h('p.muted', (solo
-        ? `Set your video transmitter to 25 mW and fly through the gate.${laps}`
-        : `Every pilot: 25 mW, then practice laps until all four are calibrated. ` +
-          `${done.length} of ${racing.length} done.`) +
-        ' Nothing to press — the app says out loud when it is calibrated.'));
+      h('p.muted', solo
+        ? `Video power 25 mW. Fly the gate.${laps}`
+        : `All pilots: 25 mW, then practice laps. ${done.length} of ${racing.length} calibrated.`));
   };
   drawStatus();
 
@@ -1183,7 +1180,7 @@ function renderPassLine(app, slot, ref, sig, threshold) {
   ref.passLine._t = key;
 
   if (!rep.seen) {
-    mount(ref.passLine, h('span.muted', 'No pass seen yet — fly through the gate.'));
+    mount(ref.passLine, h('span.muted', 'No passes yet. Fly the gate.'));
     return;
   }
   /* Two verdicts describe a gate that cannot work at all, and both of them
@@ -1198,11 +1195,9 @@ function renderPassLine(app, slot, ref, sig, threshold) {
     mount(ref.passLine,
       h('span.dot', { 'data-tone': 'bad' }),
       h('span', rep.verdict === 'no trigger'
-        ? `${plural(rep.seen, 'pass', 'passes')} seen, but this receiver has no trigger ` +
-          'level yet, so the timer cannot report a lap.'
-        : `${plural(rep.seen, 'pass', 'passes')} seen, but the trigger sits under this ` +
-          'receiver’s own noise — the timer thinks a quad is permanently in the gate ' +
-          'and never sees a crossing.'),
+        ? `${plural(rep.seen, 'pass', 'passes')}, no trigger set. Laps cannot be detected.`
+        : `${plural(rep.seen, 'pass', 'passes')}, trigger below the noise floor. ` +
+          'No crossing can be detected.'),
       ...fix);
     return;
   }
@@ -1210,13 +1205,13 @@ function renderPassLine(app, slot, ref, sig, threshold) {
              : rep.verdict === 'fragile' ? 'warn'
              : rep.missed === rep.seen ? 'bad' : 'warn';
   const words = rep.verdict === 'good'
-    ? `${plural(rep.seen, 'pass', 'passes')} seen, all would count.`
+    ? `${plural(rep.seen, 'pass', 'passes')}, all detected.`
+    /* Counted, but only just. Saying "all detected" here would be true today and
+     * a lie on the next flight, which is the worst kind of reassurance. */
     : rep.verdict === 'fragile'
-    /* Counted, but only just. Saying "all would count" here would be true today
-     * and a lie on the next flight, which is the worst kind of reassurance. */
-    ? `${plural(rep.seen, 'pass', 'passes')} seen, all counted — but the closest cleared ` +
-      `by only ${Math.round(rep.thinnest)}. A weaker pass would be missed.`
-    : `${plural(rep.seen, 'pass', 'passes')} seen — ${rep.counted} would count, ` +
+    ? `${plural(rep.seen, 'pass', 'passes')}, all detected. Smallest margin ` +
+      `${Math.round(rep.thinnest)} — a weaker pass would miss.`
+    : `${plural(rep.seen, 'pass', 'passes')}, ${rep.counted} detected, ` +
       `${rep.missed} missed by up to ${Math.round(rep.worstMiss)}.`;
   const kids = [h('span.dot', { 'data-tone': tone }), h('span', words)];
   /* Only offer the fix when there is one: a suggestion that cannot separate a
@@ -1411,9 +1406,8 @@ SCREENS.findChannel = (app, slot) => {
       if (found.length > 1) {
         status.textContent = '';
         mount(result, h('div.note', { 'data-tone': 'warn' },
-          h('strong', `${found.length} transmitters are on the air`),
-          'Only you know which one is yours — check your goggles. Everything else here ' +
-          'is somebody else’s video, or a quad left switched on.',
+          h('strong', `${found.length} frequencies detected`),
+          'Select your frequency. The others are separate transmitters.',
           h('div.act', ...found.map(sgn => h('button', { class: sgn === found[0] ? 'go' : 'ghost',
             onclick: use(sgn.name) },
             `${sgn.name} · ${sgn.freq}`,
@@ -1650,30 +1644,27 @@ async function fineSweep(app, slot, centre, status, bars, result, register) {
   if (scanner.lost) {
     status.textContent = '';
     mount(result, h('div.note', { 'data-tone': 'bad' },
-      h('strong', 'The sweep was cut short'),
-      `The timer link dropped after ${plural(points.length, 'point')}, so this is not the ` +
-      'whole picture. Power-cycle the timer, reconnect and try again — and check the ' +
-      'receiver’s channel, because a sweep that ends early cannot put it back.'));
+      h('strong', 'Sweep incomplete'),
+      `Link dropped after ${plural(points.length, 'point')}. Power-cycle the timer and ` +
+      'reconnect, then check the receiver’s channel — an interrupted sweep cannot restore it.'));
     return;
   }
   if (!points.length) {
     status.textContent = '';
     mount(result, h('div.note', { 'data-tone': 'warn' },
-      h('strong', 'Nothing was measured'), 'The sweep stopped before it read anything.'));
+      h('strong', 'Nothing measured'), 'The sweep stopped before any reading.'));
     return;
   }
   const top = [...points].sort((a, b) => b.peak - a.peak)[0];
   const named = laprf.channelsByFreq(Number(top.name));
   status.textContent = '';
   mount(result, h('div.note', { 'data-tone': 'ok' },
-    h('strong', `Strongest at ${top.name} MHz`),
+    h('strong', `Peak at ${top.name} MHz`),
     named.length
-      ? `That is exactly ${named.map(c => c.name).join(' / ')}. `
-      : 'That is between named channels — the video is centred there, and the ' +
-        'nearest channel is the one to use. ',
-    'The bars above are the real shape of your signal: a wide, flat hump means a ' +
-    'digital VTX, which spreads across several channels and will read strongly on ' +
-    'more than one of them.'));
+      ? `${named.map(c => c.name).join(' / ')}. `
+      : 'Between named channels — use the nearest. ',
+    'A narrow peak is an analog VTX on that frequency. A wide flat hump is digital, ' +
+    'spread across several channels.'));
 }
 
 function voiceSheet(app) {
@@ -1707,9 +1698,8 @@ function voiceSheet(app) {
             if (on) app.beeper.ping(1, { force: true });
           } }, 'Beep on every crossing'),
         h('button.ghost', { onclick: () => app.beeper.ping(1, { force: true }) }, 'Hear it'))),
-    h('div.muted', 'A tone the instant the timer reports a crossing. Stand at the gate and ' +
-                   'fly through it: if the beep lands with the quad rather than after it, the ' +
-                   'lap times are honest. One pitch per receiver.'),
+    h('div.muted', 'Tone on each crossing the timer reports, one pitch per receiver. ' +
+                   'Use it to check the timer fires as the quad passes, not after.'),
     h('button.ghost.wide', { onclick: () => v.say('Lap 3, 24.7', { force: true }) },
       'Test a callout')));
 }

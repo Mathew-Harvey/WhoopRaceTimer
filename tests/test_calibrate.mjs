@@ -31,7 +31,7 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   const { c, said } = coach();
   const line = c.update({ solo: true, slots: [slot(1, 0, 3, false)] });
   has('the brief names the power setting', line, '25 milliwatts');
-  has('and says to fly', line, 'fly through the gate');
+  has('and says to fly', line, 'Fly the gate');
 
   eq('nothing new to say on an unchanged state', c.update({ solo: true, slots: [slot(1, 0, 3, false)] }), null);
 
@@ -43,7 +43,7 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
 
   const done = c.update({ solo: true, slots: [slot(1, 3, 3, true)] });
   has('completion is announced', done, 'Calibration complete');
-  has('and says timing is now live', done, 'Timing is live');
+  has('and says timing is now live', done, 'Timing live');
   eq('then it goes quiet', c.update({ solo: true, slots: [slot(1, 4, 3, true)] }), null);
   eq('four lines for a whole solo calibration', said.length, 4);
 }
@@ -55,7 +55,7 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   c.update({ solo: true, slots: [slot(1, 0, 6, false)] });
   for (let i = 1; i <= 6; i++) c.update({ solo: true, slots: [slot(1, i, 6, false)] });
   const line = c.update({ solo: true, slots: [slot(1, 7, 6, false)] });
-  has('an unsettled gate explains itself', line, 'passes disagree');
+  has('an unsettled gate explains itself', line, 'inconsistent');
 }
 
 /* -------------------------------------------------------------- race ----- */
@@ -70,13 +70,13 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
 
   const one = c.update({ solo: false, slots: four(true, false, false, false) });
   has('a finished pilot is named', one, 'Pilot 1 calibrated');
-  has('and told how many remain', one, '3 quads to go');
+  has('and told how many remain', one, '3 remaining');
 
   eq('an unchanged state says nothing', c.update({ solo: false, slots: four(true, false, false, false) }), null);
 
-  has('singular when one remains',
+  has('the count of who is left is exact',
       (c.update({ solo: false, slots: four(true, true, false, false) }),
-       c.update({ solo: false, slots: four(true, true, true, false) })), '1 quad to go');
+       c.update({ solo: false, slots: four(true, true, true, false) })), '1 remaining');
 
   const all = c.update({ solo: false, slots: four(true, true, true, true) });
   has('and the finish is for the whole grid', all, 'All quads calibrated');
@@ -92,7 +92,7 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   c.update({ solo: true, slots: [slot(1, 0, 3, false)] });
   c.update({ solo: true, slots: [slot(1, 3, 3, true)] });
   const back = c.update({ solo: true, slots: [slot(1, 3, 3, false)] });
-  has('drifting out of calibration is announced', back, 'needs calibrating again');
+  has('drifting out of calibration is announced', back, 'out of calibration');
   eq('but only once', c.update({ solo: true, slots: [slot(1, 3, 3, false)] }), null);
 }
 
@@ -103,7 +103,7 @@ const slot = (n, seen, need, ready, name) => ({ slot: n, name, seen, need, ready
   c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 2 }] });
   eq('patience first', c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 10 }] }), null);
   const line = c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 40 }] });
-  has('then it names the real problem', line, 'Check the channel');
+  has('then it names the real problem', line, 'Check your video channel');
   eq('and says it once', c.update({ solo: true, slots: [{ ...slot(1, 0, 3, false), silentFor: 60 }] }), null);
 }
 

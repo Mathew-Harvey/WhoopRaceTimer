@@ -1073,8 +1073,7 @@ class App {
         /* Deliberately not a warning and deliberately without an action: there
          * is nothing for anyone to do here but fly, and offering a button
          * implies otherwise. */
-        return { tone: 'ok',
-                 text: 'Start flying — the first few laps calibrate the gate on their own.' };
+        return { tone: 'ok', text: 'Start flying. The first laps calibrate the gate.' };
       }
     }
     switch (this.race.state) {

@@ -74,7 +74,7 @@ export class CalibrationCoach {
          * update follows "needs calibrating again" with a progress line about
          * the same laps, which is the phone talking to itself. */
         for (const s of slots) this.saidFor[s.slot] = s.seen;
-        return this._speak('The gate needs calibrating again. Keep flying.');
+        return this._speak('Gate out of calibration. Keep flying.');
       }
       return null;
     }
@@ -84,10 +84,9 @@ export class CalibrationCoach {
       /* Said before anything has been flown, so it is an instruction rather
        * than a running commentary. */
       return this._speak(solo
-        ? `Set your video transmitter to ${CALIBRATION_POWER} and fly through the gate. ` +
-          `I will calibrate as you go.`
-        : `All pilots: set your video transmitters to ${CALIBRATION_POWER}, then fly ` +
-          `practice laps until every quad is calibrated.`);
+        ? `Set video power to ${CALIBRATION_POWER}. Fly the gate to calibrate.`
+        : `All pilots: video power ${CALIBRATION_POWER}. Fly practice laps until every ` +
+          `quad is calibrated.`);
     }
 
     /* A receiver that has heard nothing at all is not calibrating slowly, it is
@@ -99,9 +98,8 @@ export class CalibrationCoach {
       if (s.seen === 0 && s.silentFor > SILENT_S && !this.silentSaid.has(s.slot)) {
         this.silentSaid.add(s.slot);
         return this._speak(solo
-          ? 'I am not hearing your quad. Check the channel it transmits on, ' +
-            'or use find my channel.'
-          : `Nothing from ${s.name || 'slot ' + s.slot}. Check that pilot's video channel.`);
+          ? 'No signal on this receiver. Check your video channel.'
+          : `No signal from ${s.name || 'slot ' + s.slot}. Check their video channel.`);
       }
       if (s.seen > 0) this.silentSaid.delete(s.slot);
     }
@@ -115,7 +113,7 @@ export class CalibrationCoach {
           const left = slots.filter(x => !x.ready).length;
           if (left) {
             return this._speak(`${s.name || 'Slot ' + s.slot} calibrated. ` +
-                               `${left} ${left === 1 ? 'quad' : 'quads'} to go.`);
+                               `${left} remaining.`);
           }
         }
       }
@@ -123,7 +121,7 @@ export class CalibrationCoach {
 
     if (slots.every(s => s.ready)) {
       this.phase = 'done';
-      return this._speak(solo ? 'Calibration complete. Timing is live.'
+      return this._speak(solo ? 'Calibration complete. Timing live.'
                               : 'All quads calibrated. Ready to race.',
                          { priority: true });
     }
@@ -139,7 +137,7 @@ export class CalibrationCoach {
         }
         /* Seen enough laps but not yet confident — say why, rather than going
          * quiet at the exact moment someone expects to hear "complete". */
-        return this._speak('Still calibrating — the passes disagree. A few more laps.');
+        return this._speak('Passes inconsistent. More laps needed.');
       }
     }
     return null;

@@ -81,8 +81,8 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true, ca
    * lucky lap is not a calibrated gate, and saying so on one pass would be the
    * same over-claim in the other direction. */
   if (cal.ready || (cal.verdict === 'good' && cal.seen >= MIN_PASSES)) {
-    return { level: 'good', title: cal.ready ? 'Calibrated' : 'Counting every pass',
-             detail: `Trigger ${fmt(threshold)}, set from the laps you flew.` };
+    return { level: 'good', title: cal.ready ? 'Calibrated' : 'Detecting every pass',
+             detail: `Trigger ${fmt(threshold)}, set from flown laps.` };
   }
   /* Evidence exists and it is not good. Falling through to "calibrating" here
    * hid a gate that had stopped counting laps behind a reassuring word, and the
@@ -90,19 +90,18 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true, ca
   if (cal.seen >= MIN_PASSES && cal.verdict && cal.verdict !== 'none') {
     if (cal.verdict === 'all missed' || cal.verdict === 'below noise') {
       return { level: 'bad', fatal: cal.verdict === 'below noise',
-               title: 'Not counting laps',
-               detail: `${cal.seen} passes seen and none of them would be timed. ` +
-                       'Keep flying — the trigger is being corrected.' };
+               title: 'No laps detected',
+               detail: `${cal.seen} passes, none detected. Trigger correcting — keep flying.` };
     }
     if (cal.verdict === 'fragile') {
       /* Every pass counted. Calling that "missing some passes" tells a pilot
        * whose gate is working that it is not. */
-      return { level: 'warn', title: 'Margin is thin',
-               detail: 'Every pass counted, but only just. A weaker one would be missed.' };
+      return { level: 'warn', title: 'Margin is small',
+               detail: 'All passes detected, but only just. A weaker one would miss.' };
     }
     if (cal.verdict === 'some missed') {
-      return { level: 'warn', title: 'Missing some passes',
-               detail: 'Not every crossing would be timed yet. A few more laps.' };
+      return { level: 'warn', title: 'Missing passes',
+               detail: 'Not every crossing is detected. More laps needed.' };
     }
   }
   if (floor != null && ceiling != null) {
@@ -139,7 +138,7 @@ export function gateHealth({ threshold, floor, ceiling, live, enabled = true, ca
    * be handed. The first laps flown supply the evidence and the trigger moves
    * itself; the only correct instruction is "fly". */
   return { level: 'learning', title: 'Calibrating',
-           detail: 'The first few laps set this receiver’s trigger. Just fly.' };
+           detail: 'The first laps set this receiver’s trigger. Fly the gate.' };
 }
 
 const fmt = v => v == null ? '—' : Math.round(v);

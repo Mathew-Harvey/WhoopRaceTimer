@@ -8,6 +8,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # The landing page at /landing lives in its own repository. A push there fires
+  # this event so the two stay in step; see the fold-in step below.
+  repository_dispatch:
+    types: [landing-updated]
 
 permissions:
   contents: read
@@ -34,6 +38,20 @@ jobs:
       # when the app does.
       - name: Stamp the service worker with this commit
         run: sed -i "s/const VERSION = 'wt-[^']*'/const VERSION = 'wt-${GITHUB_SHA::10}'/" static/sw.js
+      # https://whooptimer.webfpv.org/landing. A Pages custom domain belongs to
+      # exactly one Pages site, so the landing page cannot be published from its
+      # own repository and still answer on this host — it is checked out here and
+      # copied in. Both repositories are public, so this needs no token.
+      - uses: actions/checkout@v4
+        with:
+          repository: Mathew-Harvey/LandingWhoopTimer
+          ref: main
+          path: .landing
+      - name: Fold in the landing page
+        run: |
+          mkdir -p static/landing
+          cp -R .landing/site/. static/landing/
+          rm -rf .landing
       - uses: actions/upload-pages-artifact@v3
         with:
           path: static

@@ -9,3 +9,6 @@ __pycache__/
 *.pyo
 .venv/
 node_modules/
+
+# built at deploy time from Mathew-Harvey/LandingWhoopTimer
+static/landing/

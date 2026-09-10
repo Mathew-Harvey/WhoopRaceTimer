@@ -389,6 +389,31 @@ channels or thresholds.
 | `H` | history |
 | `Esc` | back to the session |
 
+## Building a timer
+
+A LapRF is discontinued and a used one is not always findable, so
+`firmware/whoopgate/` is an ESP32 and one to four RX5808 receivers running
+firmware that **speaks the LapRF protocol over Bluetooth LE**. The browser
+connects to it directly, with no bridge and no cable, because as far as the app
+is concerned it is a LapRF — every frame it emits is a frame a LapRF emits.
+
+About twenty-five dollars in parts. See [firmware/README.md](firmware/README.md)
+for the build, the wiring and the one step that decides whether it works.
+
+The protocol layer and the pass detector are portable C++ with no Arduino
+headers in them, so both are compiled on a host and checked byte for byte
+against `laprf.py` — including a status record held against bytes captured from
+a real puck:
+
+```bash
+python3 firmware/test/test_firmware_parity.py
+```
+
+What that cannot check is the signal scale, which depends on the receiver
+module in front of you. `config.h` carries a starting point and the firmware has
+a serial command that prints what it is actually reading, which is the
+difference between a gate you can trust and one you hope about.
+
 ## How it is put together
 
 The browser is the whole application. The Python server is a byte pipe and a
@@ -404,6 +429,7 @@ file server; it does not decode the protocol and holds no state worth losing.
 | `static/js/screens.js` | every screen |
 | `static/sw.js` | offline cache, so it opens at a track with no signal |
 | `laprf.py` | the reference protocol implementation the JavaScript is tested against |
+| `firmware/whoopgate/` | ESP32 firmware for a gate that is itself a LapRF over BLE |
 | `ble.py`, `device.py` | raw Bluetooth and serial transports for the local bridge |
 | `server.py` | static file server plus `/bridge/*` |
 

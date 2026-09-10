@@ -21,3 +21,26 @@ jobs:
       - run: node tests/test_calibrate.mjs
       # The LapRF wire format, pinned so a second timer cannot quietly change it.
       - run: python3 tests/test_laprf_golden.py
+      # The gate firmware speaks that same wire format from the other end. Its
+      # protocol and pass detection are portable C++ with no Arduino in them, so
+      # this compiles and checks them here, without an ESP32 in the loop.
+      - run: python3 firmware/test/test_firmware_parity.py
+
+  firmware-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - run: arduino-cli core update-index
+      - run: arduino-cli core install esp32:esp32
+      # Every supported receiver count, because the pin tables and the sampling
+      # loop are sized from one #define and a build with fewer receivers is the
+      # one nobody tries until they have soldered it.
+      - name: Build for one to four receivers
+        run: |
+          for n in 1 2 3 4; do
+            sed -i "s/#define NUM_RX [0-9]/#define NUM_RX $n/" firmware/whoopgate/config.h
+            echo "::group::NUM_RX=$n"
+            arduino-cli compile --warnings all --fqbn esp32:esp32:esp32 firmware/whoopgate
+            echo "::endgroup::"
+          done

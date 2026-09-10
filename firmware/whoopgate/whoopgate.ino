@@ -267,18 +267,22 @@ static void handleRecord(const uint8_t* rec, size_t len) {
 
 /* --------------------------------------------------------------- serial --- */
 static void printDiagnostics() {
+  /* Integers only. This is the tool somebody calibrates with, and whether %f
+   * prints anything depends on how the core was built — a diagnostic that
+   * silently emits nothing is worse than no diagnostic at all. */
   Serial.println();
   Serial.println("slot  mV     counts  trigger  freq   enabled  laps");
   for (int i = 0; i < NUM_RX; i++) {
     Slot& sl = slots[i];
-    float mv = readMillivolts(PIN_RSSI[i]);
-    Serial.printf("%-5d %-6.0f %-7.0f %-8.0f %-6u %-8s %lu\n", i + 1, mv,
-                  countsFromMillivolts(mv), sl.threshold, sl.frequency,
+    int mv = (int)(readMillivolts(PIN_RSSI[i]) + 0.5f);
+    Serial.printf("%-5d %-6d %-7d %-8d %-6u %-8s %lu\n", i + 1, mv,
+                  (int)(countsFromMillivolts((float)mv) + 0.5f),
+                  (int)(sl.threshold + 0.5f), sl.frequency,
                   sl.enabled ? "yes" : "no",
                   (unsigned long)sl.gate.passCount());
   }
-  Serial.printf("map: %d mV -> %.0f counts, %d mV -> %.0f counts   (config.h)\n",
-                RSSI_MV_QUIET, LAPRF_QUIET, RSSI_MV_PEAK, LAPRF_PEAK);
+  Serial.printf("map: %d mV -> %d counts, %d mV -> %d counts   (config.h)\n",
+                RSSI_MV_QUIET, (int)LAPRF_QUIET, RSSI_MV_PEAK, (int)LAPRF_PEAK);
   Serial.printf("link: %s   min lap %lu ms   status every %u ms   gate 0x%02x\n",
                 ble.connected() ? "connected" : "advertising",
                 (unsigned long)minLapMs, statusIntervalMs, gateState);

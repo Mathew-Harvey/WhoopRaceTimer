@@ -30,7 +30,13 @@ static const int PIN_RSSI[MAX_RX] = {36, 39, 34, 35};
 #define PIN_SPI_DATA 23
 static const int PIN_RX_SEL[MAX_RX] = {25, 26, 27, 13};
 
-/* Optional. Set to -1 if you are not measuring the pack.
+/* POWER. An RX5808 is specified at 3.5-5 V and around 170 mA, so it goes on the
+ * board's 5V/VIN pin and not on 3V3 — 3.3 V is below its minimum. Four of them
+ * plus an ESP32 with the radio up is roughly 840 mA, which is more than a USB
+ * port will give you: anything past two receivers wants an external 5 V supply
+ * of an amp or more into VIN. See firmware/README.md.
+ *
+ * Optional. Set to -1 if you are not measuring the pack.
  * A 100k/100k divider from the cell to this pin halves the voltage; adjust
  * BATTERY_DIVIDER if yours is different. Also ADC1. */
 #define PIN_BATTERY 32
@@ -62,8 +68,14 @@ static const int PIN_RX_SEL[MAX_RX] = {25, 26, 27, 13};
 #define LAPRF_PEAK 2900.0f  /* what a LapRF reports at a close pass */
 
 /* Reads per sample, averaged. The ESP32's ADC is noisy enough that a single
- * read wanders by tens of millivolts; eight is cheap and steadies it. */
-#define ADC_OVERSAMPLE 8
+ * read wanders by tens of millivolts, and averaging steadies it.
+ *
+ * Four rather than eight because of the loop budget: at SAMPLE_HZ 200 the whole
+ * cycle has 5 ms, analogReadMilliVolts() costs on the order of 100 us because it
+ * applies the per-chip calibration, and four receivers times eight reads is most
+ * of that gone before the radio has had a turn. Four leaves room, and the
+ * median-of-five in gate.h is what actually rejects a wild sample. */
+#define ADC_OVERSAMPLE 4
 
 /* How often each receiver is sampled. A whoop crossing lasts a few hundred
  * milliseconds, so 200 Hz puts dozens of samples inside one — enough that the

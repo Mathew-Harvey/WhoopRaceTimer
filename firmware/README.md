@@ -46,17 +46,45 @@ Bring it up on the bench, open the gate screen, and believe the meter.
 
 | Qty | Part | Notes |
 |---|---|---|
-| 1 | ESP32 DevKit (WROOM-32, 38-pin) | Not an ESP32-C3/S3/C6 — the pin map in `config.h` is for the original ESP32 |
+| 1 | ESP32 DevKit (WROOM-32) | 30-pin or 38-pin — every pin used is on both. Not a C3/S3/C6: the pin map is for the original ESP32 |
 | 1–4 | RX5808 5.8 GHz receiver module | One per pilot. **The SPI mod below is not optional** |
 | 3 per RX | 1 kΩ resistor, ¼ W | In series on each SPI line |
 | 1 per RX | 100 kΩ resistor, ¼ W | RSSI to ground |
 | — | 26 and 30 AWG silicone wire | |
-| 1 | USB cable, data not charge-only | Flashing and power |
-| 1–4 | 5.8 GHz antenna + u.FL pigtail | Optional, and worth it |
+| 1 | USB cable, data not charge-only | Flashing, and power for a one-receiver build |
+| 1 | 5 V supply, 1 A or more | **Three or four receivers only** — see Power below |
+| 1–4 | 5.8 GHz antenna | Optional, and worth it. See the connector note below |
+
+Header pins usually arrive loose with a DevKit, so budget for soldering them
+unless the listing says pre-soldered.
 
 One receiver is a working solo gate. Four is a race. The app races slots 1–4
 either way, and reports the ones you did not build as switched off, which is
 what they are.
+
+### Power
+
+An RX5808 is specified at **3.5–5 V, around 170 mA**. So:
+
+- It goes on the board's **5V / VIN** pin, not 3V3. 3.3 V is below its minimum.
+- Add it up before you plug into a laptop:
+
+| Receivers | Draw | From a USB port |
+|---|---|---|
+| 1 | ~330 mA | fine |
+| 2 | ~500 mA | marginal |
+| 3 | ~670 mA | no |
+| 4 | ~840 mA | no |
+
+Past two receivers, feed VIN from an external 5 V supply of an amp or more.
+A brown-out mid-race looks exactly like a gate that stopped seeing laps.
+
+### The antenna connector
+
+RX5808 modules come both ways. Some have a u.FL/IPEX socket, which takes a
+u.FL-to-RP-SMA pigtail and an antenna. Others — including the one photographed
+below — have a bare pad marked **ANT**, and the pigtail has to be soldered to it.
+Check the photos on the listing before you buy the pigtail.
 
 ## 1 · The SPI mod, first
 
@@ -87,7 +115,7 @@ Per receiver. CLK and DATA are shared by every module; only SEL is its own.
 | CH2 / SPI_SEL | GPIO25 / 26 / 27 / 13 — one per receiver | 1 kΩ in series |
 | CH3 / SPI_CLK | GPIO18 | 1 kΩ in series |
 | RSSI | GPIO36 / 39 / 34 / 35 — one per receiver | 100 kΩ to GND |
-| +5V | 5V (VIN when USB-powered) | |
+| +5V | 5V / VIN — **not 3V3** | see Power above |
 | GND | GND | |
 
 AUDIO and VIDEO are unused.
@@ -169,6 +197,11 @@ when the signal falls away again. The minimum lap time is still honoured on top.
 rising one. The app calibrates from the peak height a timer reports, and a peak
 is not known until the crossing is over — so the record arrives about half a
 pass late while the *lap time* stays exact.
+
+**Receiver gain is accepted and ignored.** The app sends a gain figure with
+every RF setup, and this echoes back exactly what it was given so the read-back
+matches and the app does not retry. It has no effect: an RX5808 has no
+programmable gain, and the level that matters is the trigger.
 
 **A write to a receiver it does not have is refused.** Wire two and the app will
 still ask all four about themselves; slots 3 and 4 answer that they are off, and

@@ -27,6 +27,36 @@ export const PRESETS = {
 export const DEFAULT_PRESET = 'normal';
 export const MIN_SPAN = 120.0;
 
+/**
+ * Has this receiver heard nothing at all, for long enough to say so?
+ *
+ * Not "calibrating slowly" — not listening to the right thing. A whoop on R1 is
+ * invisible to a receiver sitting on R8, and the difference matters because the
+ * instruction is opposite: keep flying, versus check your channel. Repeating
+ * "set 25 mW and fly" at someone whose quad cannot be heard is the worst thing
+ * the calibration flow can do, and the screen did it indefinitely while the
+ * voice said the useful sentence once and went quiet.
+ *
+ * Judged from the receiver's own evidence rather than a wall clock, so it holds
+ * whether or not the voice is on: watched long enough to have heard something,
+ * no pass recorded, and a signal that has never lifted by as much as the span
+ * this file already calls the least a usable gate can have.
+ */
+export function neverHeard(sig, seen, silentS) {
+  if (!sig || seen > 0) return false;
+  const hist = sig.history || [];
+  if (hist.length < 2 || sig.lastAt - hist[0].t <= silentS) return false;
+  /* Measured off the history `add` keeps, not off peakDelta: that only moves
+   * when `check` is called, which is the manual calibration path, so in the
+   * ordinary auto-calibrating flow it stays zero — and a receiver that is
+   * hearing the quad perfectly well would have been told it had no signal. */
+  const floor = sig.quiet();
+  if (floor == null) return false;
+  let peak = -Infinity;
+  for (const h of hist) if (h.v > peak) peak = h.v;
+  return peak - floor < MIN_SPAN;
+}
+
 /** Place a threshold between a slot's lower and upper bound. */
 export function derive(floor, ceiling, fraction = 0.42) {
   if (floor == null || ceiling == null) return null;

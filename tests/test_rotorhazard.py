@@ -857,13 +857,13 @@ LAPRF_FILES = {
     "static/js/link.js":
         "05c4214ea84694820e00336414f4ee44a15b39988b10e954a1112e959d62b56b",
     "static/js/tuning.js":
-        "78e94382613991b1fdefeab03edb2a66679609f23147e63ef922653549af739a",
+        "94011a35ce30d84530952daaec86000d63b3ee3cf52c5c77ad95783f12b69b5b",
     "static/js/app.js":
         "e70cb53abed950f4c0e62ed5ad22026241ae148857a11ce8103e7384cab95432",
     "static/js/race.js":
         "2698f494653bfc9a22f4def321067db6e3cb6b0c96bea6c958f4d4dfc5379c08",
     "static/js/screens.js":
-        "e6363a9fa3c7acf8661db0f0e1cfdf2cb2505e06a8abc0857de511e71204afbb",
+        "25defcb640cc00d3b7e4524f4aa808734b0792d78f283bb25176a34b38877777",
 }
 for name, want in LAPRF_FILES.items():
     got = hashlib.sha256(open(os.path.join(ROOT, name), "rb").read()).hexdigest()

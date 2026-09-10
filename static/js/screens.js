@@ -13,6 +13,7 @@ import { fmtDuration } from './race.js';
 import { ChannelScanner } from './tuning.js';
 import { h, mount, clear, icon, toast, sheet, confirmSheet, clockStr, fmt2, plural } from './ui.js';
 import { DOCTOR_URL } from './setup.js';
+import { SILENT_S } from './calibrate.js';
 
 export const SCREENS = {};
 const SLOTS = [1, 2, 3, 4];
@@ -1072,6 +1073,41 @@ SCREENS.gate = app => {
     const seenAny = states.some(x => x.rep.seen > 0);
     if (!racing.length) {
       mount(statusBox, h('p.muted', 'No receiver is racing, so there is nothing to calibrate.'));
+      return;
+    }
+    /* A sweep is not the time to be told to fly. The receiver is hopping across
+     * forty frequencies, so nothing it hears means what it usually means — the
+     * voice goes quiet through a scan for exactly that reason, and a screen
+     * that goes on saying "fly the gate" is giving the instruction the voice
+     * deliberately withholds. */
+    if (app.scanning != null) {
+      mount(statusBox,
+        h('h3', 'Scanning channels'),
+        h('p.muted', 'Nothing to calibrate until this finishes and a channel is set.'));
+      return;
+    }
+    /* A receiver that has heard nothing at all is not calibrating slowly, it is
+     * not listening to the right thing — a whoop on R1 is invisible to a
+     * receiver sitting on R8. Repeating "set 25 mW and fly" at someone whose
+     * quad cannot be heard is the worst thing this flow can do, and the screen
+     * was doing it indefinitely while the voice said the useful sentence once.
+     * Judged from the receiver's own evidence rather than a clock, so it holds
+     * whether or not the voice is on: watched for long enough to have heard
+     * something, no pass recorded, and a signal that has never lifted. */
+    const deaf = states.filter(x =>
+      tuning.neverHeard(app.sig.get(x.p.slot), x.rep.seen, SILENT_S));
+    if (deaf.length === racing.length) {
+      const solo1 = app.mode === 'solo' || racing.length === 1;
+      const hw1 = app.timer.rfSetup[racing[0].slot];
+      mount(statusBox,
+        h('h3', solo1 ? 'No signal on this receiver' : 'No signal from any quad'),
+        h('p.muted', solo1
+          ? 'Check the quad is powered with video on, and that this slot is set to the ' +
+            'channel the goggles show. This receiver is tuned to ' +
+            `${racing[0].channel}` +
+            `${hw1?.frequency ? ` — the timer reports ${hw1.frequency} MHz` : ''}.`
+          : 'Check each quad is powered with video on, and that every slot is set to the ' +
+            'channel that pilot flies.'));
       return;
     }
     if (done.length === racing.length) {

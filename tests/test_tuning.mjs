@@ -8,7 +8,7 @@
  *
  *   node tests/test_tuning.mjs
  */
-import { Calibration, SlotSignal, passReport, derive, gateHealth, readiness } from '../static/js/tuning.js';
+import { Calibration, SlotSignal, passReport, derive, gateHealth, readiness, neverHeard, MIN_SPAN } from '../static/js/tuning.js';
 import { viewBytes } from '../static/js/link.js';
 import { ChannelScanner } from '../static/js/tuning.js';
 import { ALL_CHANNELS, splitRecords, decodeRecord } from '../static/js/laprf.js';
@@ -531,6 +531,55 @@ eq('no passes reads as none', passReport([], 1600).verdict, 'none');
   eq('the same crossing is not counted twice', sig.passes.length, 1);
   sig.recordHardwarePass(2400, 1600, 960, 1009);
   eq('a later crossing is its own pass', sig.passes.length, 2);
+}
+
+/* Heard nothing, versus calibrating slowly.
+ *
+ * The two need opposite instructions — check your channel, versus keep flying —
+ * and the screen used to give the second one forever to a receiver in the first
+ * state. A whoop on R1 is invisible to a receiver sitting on R8, and it was a
+ * node with no channel selectivity that made this obvious: nothing was ever
+ * heard, and the screen went on saying "set 25 mW and fly" indefinitely. */
+{
+  const SILENT = 25;
+  const quiet = () => { const s = new SlotSignal(1);
+                        for (let t = 0; t <= 40; t += 1) s.add(960, 1000 + t);
+                        return s; };
+
+  eq('a receiver watched for long enough with nothing heard is deaf, not slow',
+     neverHeard(quiet(), 0, SILENT), true);
+
+  /* The moment the page loads, nothing has been heard yet either — and saying
+   * "no signal" then would be wrong for every pilot who has not taken off. */
+  const fresh = new SlotSignal(1);
+  for (let t = 0; t <= 5; t += 1) fresh.add(960, 1000 + t);
+  eq('a receiver only just switched on is not', neverHeard(fresh, 0, SILENT), false);
+
+  /* One recorded pass settles it: this receiver can hear the quad, so the
+   * instruction is to keep flying. */
+  eq('nor is one that has recorded a pass', neverHeard(quiet(), 1, SILENT), false);
+
+  /* And a signal that lifts without yet clearing the trigger is a quad being
+   * heard — the trigger is what needs moving, which is what calibration does. */
+  const lifting = quiet();
+  lifting.add(960 + MIN_SPAN + 50, 1041);
+  eq('nor is one whose signal has lifted', neverHeard(lifting, 0, SILENT), false);
+
+  /* The trap this predicate walked into first time: peakDelta only moves in the
+   * manual calibration path, so in the ordinary auto-calibrating flow it is
+   * zero for a receiver that is hearing the quad perfectly well. Judged off
+   * peakDelta, this case comes back "no signal, check your channel" at a pilot
+   * whose video is arriving. */
+  const heardButNotArmed = quiet();
+  for (let t = 41; t <= 44; t += 1) heardButNotArmed.add(2400, 1000 + t);
+  eq('a lift with no manual calibration behind it still counts as heard',
+     neverHeard(heardButNotArmed, 0, SILENT), false);
+  eq('  and peakDelta really is untouched there', heardButNotArmed.peakDelta, 0);
+
+  eq('and nothing at all is not something to make claims about',
+     neverHeard(null, 0, SILENT), false);
+  eq('nor is a receiver with no history yet',
+     neverHeard(new SlotSignal(1), 0, SILENT), false);
 }
 
 if (failures) { console.error(`\n${failures} failure(s)`); process.exit(1); }

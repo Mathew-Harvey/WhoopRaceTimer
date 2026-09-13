@@ -1,0 +1,9 @@
+# The app itself is public and worth finding.
+User-agent: *
+Allow: /
+
+# Pilot stats pages are not. Somebody publishing their lap times agreed to a
+# page anyone with the link can open — not to their chosen name turning up in
+# a search for it. The pages also carry a noindex meta tag; this is the half
+# that stops a crawler fetching them in the first place.
+Disallow: /stats/

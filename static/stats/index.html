@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WhoopTimer — pilot stats</title>
+<meta name="description" content="Lap times and form for pilots who chose to publish them.">
+<!-- The app tells a pilot, before they agree to anything, that their page is
+     public but not indexed by search engines. That promise is kept here and in
+     robots.txt, and it is the reason both exist. -->
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#07090c">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../app.css">
+<style>
+  /* The app owns its own scrolling; a document does not. */
+  body { overflow: auto; }
+  .statgrid { display: grid; gap: var(--s4);
+              grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+  .statgrid .v { font-family: var(--font-num); font-size: var(--t-24); font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--t-15); }
+  th, td { padding: 7px 8px; border-top: 1px solid var(--line-subtle); text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { border-top: none; }
+  .tablewrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="wrap stack" id="page" style="max-width:900px">
+  <div class="card"><p class="muted">Loading…</p></div>
+</div>
+<div id="toasts" role="status" aria-live="polite"></div>
+<noscript>
+  <div class="wrap"><div class="card"><p>This page needs JavaScript to read the stats.</p></div></div>
+</noscript>
+<script type="module" src="../js/stats-page.js"></script>
+</body>
+</html>

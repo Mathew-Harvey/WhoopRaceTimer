@@ -378,6 +378,53 @@ derive a threshold and says why, rather than inventing one that will misfire.
 Everything persists in the browser, so a reload never resets your pilots,
 channels or thresholds.
 
+## Stats
+
+Press <kbd>S</kbd>. Every session this browser has saved, cleaned and rolled up
+the way a season of motorsport is read: a personal best, a race pace that is not
+the best lap, a consistency figure, and all of it again per day, per week and
+per month so improvement is a shape rather than a number.
+
+**Laps are cleaned before they are counted.** A saved session is not a list of
+laps flown at racing pace — it contains the battery changes, where the pilot
+landed, swapped and took off again and the gate recorded the interval as one lap
+eleven minutes long. Averaging that gives a personal average of four minutes.
+
+The rejection is done with a median and a median absolute deviation rather than
+a mean and a standard deviation, because two stoppages in one session defeat the
+obvious method: each one inflates the sigma that is meant to catch the other,
+both land inside three sigma, and the pilot's average lap becomes eighty
+seconds. A lap more than three times the session median is a stoppage whatever
+the dispersion says; a session of four laps has no usable dispersion at all and
+only the hard rules run; and a metronomic pilot with a MAD of zero has a
+relative floor under the band, or every lap they ever flew is an outlier.
+
+Nothing is deleted. A page shows *26 laps flown, 25 counted* and says why.
+
+### Publishing, which is off
+
+The app has never had an account and still does not. Nothing leaves the device
+unless somebody is shown the warning and taps the button — the ask happens once,
+after a session, and declining is remembered.
+
+Saying yes generates a uuid and a secret in the browser, and publishes **only
+that pilot's own entry** from each session: a saved race holds everyone who
+flew, and uploading all of them would put three other people's names on a public
+page on the strength of one person's consent. Sessions queue on the device and
+go out when there is signal, because a track is where there is none.
+
+A pilot can rename or delete everything from the same device. The secret is the
+only proof of ownership and the app says so before anyone agrees.
+
+The public page lives at `/stats/`, carries `noindex`, and is disallowed in
+`robots.txt` — the app promises a link that works for anyone who has it and a
+page search engines do not list, and those two files are that promise.
+
+Publishing needs a service to publish to, and there is none by default. See
+[stats-service/README.md](stats-service/README.md) — a Cloudflare Worker and a
+D1 database, three commands. Without it the Stats screen and `/stats/` still
+work, on this browser's own history.
+
 ## Keyboard
 
 | key | |
@@ -387,6 +434,7 @@ channels or thresholds.
 | `U` | undo the last lap |
 | `G` | gate and signal |
 | `H` | history |
+| `S` | stats |
 | `Esc` | back to the session |
 
 ## Building a timer

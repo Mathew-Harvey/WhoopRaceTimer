@@ -1,0 +1,19 @@
+name = "whooptimer-stats"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+
+# Created with:
+#   wrangler d1 create whooptimer-stats
+# then paste the database_id it prints here.
+[[d1_databases]]
+binding = "DB"
+database_name = "whooptimer-stats"
+database_id = "PUT-YOUR-DATABASE-ID-HERE"
+
+[vars]
+# Which site may call this from a browser. "*" is fine and is the default:
+# the data served is public by definition, and a write is authorised by the
+# pilot's secret rather than by where the request came from.
+ALLOWED_ORIGIN = "*"
+# A hard ceiling per pilot, so one misbehaving client cannot fill the database.
+MAX_SESSIONS_PER_PILOT = "2000"

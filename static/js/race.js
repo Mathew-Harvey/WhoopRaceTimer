@@ -398,6 +398,11 @@ export class Race {
       targetLaps: this.targetLaps,
       targetSeconds: this.targetSeconds,
       consecN: this.consecN,
+      /* Both of these are here for the stats aggregation: a holeshot lap one
+       * carries the run-up to the gate and is not a lap time, and the minimum
+       * lap is what makes a double trigger recognisable later. */
+      holeshot: this.holeshot,
+      minLap: this.minLap,
       duration: Math.round(this.elapsed * 100) / 100,
       finishedBy: this.finishedBy,
       results: order.map((p, i) => ({

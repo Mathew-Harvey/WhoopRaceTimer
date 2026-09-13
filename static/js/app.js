@@ -18,6 +18,8 @@ import { Voice, Wake, Beeper } from './speech.js';
 import { checkSetup } from './setup.js';
 import { CalibrationCoach } from './calibrate.js';
 import { toast, mount, closeSheet, sheetOpen, confirmSheet } from './ui.js';
+import * as publish from './publish.js';
+import * as statsUi from './stats.js';
 import { SCREENS } from './screens.js';
 
 export const SLOTS = [1, 2, 3, 4];
@@ -145,6 +147,9 @@ class App {
       this.markStructural();
     });
     addEventListener('keydown', e => this.onKey(e));
+    /* Anything that could not be published at the track goes out when
+     * there is signal again. No-op unless publishing was turned on. */
+    publish.autoFlush(r => toast(`Published ${r.sent} session${r.sent === 1 ? '' : 's'}.`, 'ok'));
     /* A rebuild between pointerdown and pointerup detaches the element being
      * pressed, and the browser then never fires the click. Hold rebuilds until
      * the finger comes off — a lap landing mid-tap must not eat the tap. */
@@ -1157,7 +1162,10 @@ class App {
 
   finishRace(results) {
     const anyLaps = results.results.some(r => r.laps > 0);
-    if (anyLaps) store.appendHistory(results);
+    if (anyLaps) {
+      store.appendHistory(results);
+      statsUi.onSessionSaved(this, results);
+    }
     this.wake.release();
     this.render();
     if (anyLaps) this.showResults(results);
@@ -1285,7 +1293,12 @@ class App {
      * dropped mid-race keeps the race on screen — laps by hand still count and
      * the coach offers the way back — instead of replacing the tower with
      * "switch your timer on". */
-    const build = SCREENS[(this.link || this.race.active) ? this.screen : 'connect'] || SCREENS.connect;
+    /* Stats is the exception: it reads saved history and needs no timer at all.
+     * Looking at your own record on the way home is most of the point of having
+     * one, and being told to switch a timer on first would be absurd. */
+    const offlineOk = this.screen === 'stats';
+    const build = SCREENS[(this.link || this.race.active || offlineOk) ? this.screen : 'connect']
+                  || SCREENS.connect;
     this.view = build(this);
     mount(document.getElementById('main'), this.view.node);
     mount(document.getElementById('topbar'), SCREENS.topbar(this));
@@ -1319,6 +1332,7 @@ class App {
     if (k.toLowerCase() === 'u') { this.undoLast(); e.preventDefault(); }
     if (k.toLowerCase() === 'g') this.go('gate');
     if (k.toLowerCase() === 'h') this.go('history');
+    if (k.toLowerCase() === 's') this.go('stats');
     if (k === 'Escape' && !sheetOpen() && this.screen !== 'fly' && this.screen !== 'race') {
       this.go(this.mode === 'solo' ? 'fly' : 'race');
     }

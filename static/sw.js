@@ -14,6 +14,11 @@ const SHELL = [
   'js/boot.js', 'js/app.js', 'js/screens.js', 'js/ui.js', 'js/link.js',
   'js/laprf.js', 'js/race.js', 'js/tuning.js', 'js/store.js', 'js/speech.js',
   'js/setup.js', 'js/calibrate.js',
+  /* The stats page and everything it needs. It is a second entry point, so it
+   * has to be precached on its own account: a pilot who opens their record at a
+   * track after the app has cached itself would otherwise get nothing. */
+  'js/aggregate.js', 'js/pilot.js', 'js/publish.js', 'js/stats.js',
+  'js/stats-page.js', 'stats/', 'stats/index.html',
 ];
 
 self.addEventListener('install', e => {

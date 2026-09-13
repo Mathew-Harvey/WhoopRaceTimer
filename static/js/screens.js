@@ -95,6 +95,8 @@ function menuSheet(app) {
     item('target', 'Gate & signal', 'What counts as a lap',
          () => { close(); app.go('gate'); }),
     item('list', 'History', 'Saved sessions and export', () => { close(); app.go('history'); }),
+    item('trophy', 'Stats', 'Your record over days, weeks and months',
+         () => { close(); app.go('stats'); }),
     item('clock', 'Race settings', 'Countdown, minimum lap, holeshot',
          () => { close(); settingsSheet(app); }),
     item('volume', 'Voice', 'Callout style, voice and speed', () => { close(); voiceSheet(app); }),
@@ -118,6 +120,7 @@ function shortcutsSheet() {
     h('div', h('kbd', 'U'), 'Undo the last lap'),
     h('div', h('kbd', 'G'), 'Gate and signal'),
     h('div', h('kbd', 'H'), 'History'),
+    h('div', h('kbd', 'S'), 'Stats'),
     h('div', h('kbd', 'Esc'), 'Back to the session')));
 }
 
@@ -229,6 +232,8 @@ SCREENS.connect = app => {
     h('div.linkrow',
       h('button', { onclick: () => app.connect('demo') }, 'Try it without a timer'),
       h('button', { onclick: () => helpSheet(app) }, 'My timer isn’t showing up'),
+      store.load('history', []).length
+        ? h('button', { onclick: () => app.go('stats') }, 'My stats') : null,
       !canConnect && h('a', { href: 'https://github.com/Mathew-Harvey/WhoopRaceTimer#running-it-locally',
                               target: '_blank', rel: 'noopener' }, 'Get the local app')));
   return { node };

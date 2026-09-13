@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const VERSION = 'wt-25';
+const VERSION = 'wt-26';
 const SHELL = [
   './', 'index.html', 'app.css', 'manifest.webmanifest', 'icon.svg',
   'icon-192.png', 'icon-512.png', 'icon-maskable.png',
@@ -18,6 +18,7 @@ const SHELL = [
    * has to be precached on its own account: a pilot who opens their record at a
    * track after the app has cached itself would otherwise get nothing. */
   'js/aggregate.js', 'js/pilot.js', 'js/publish.js', 'js/stats.js',
+  'js/charts.js', 'js/dashboard.js',
   'js/stats-page.js', 'stats/', 'stats/index.html',
 ];
 

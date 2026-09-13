@@ -421,6 +421,20 @@ export function fmtLap(s) {
   return `${m}:${(s - m * 60).toFixed(2).padStart(5, '0')}`;
 }
 
+/**
+ * Consistency, as the percentage it is.
+ *
+ * consistency is the interquartile range as a fraction of the median — it is
+ * deliberately scale-free so a 12-second track and a 35-second one compare, and
+ * that makes it the one figure on the page that is not in seconds. Printing it
+ * with an "s" after it, which is what happened first, turns a tidy 1.5% into a
+ * meaningless 0.02s and invites a pilot to read it as a lap time.
+ */
+export function fmtSpread(v) {
+  if (v == null || !isFinite(v)) return '—';
+  return `${(v * 100).toFixed(1)}%`;
+}
+
 /** Seconds as a duration, for air time. */
 export function fmtDuration(s) {
   if (s == null || !isFinite(s)) return '—';
@@ -429,4 +443,222 @@ export function fmtDuration(s) {
   if (h) return `${h}h ${pad(m)}m`;
   if (m) return `${m}m ${pad(total % 60)}s`;
   return `${total}s`;
+}
+
+/* ======================================================================== */
+/* Series for the dashboard.                                                */
+/*                                                                          */
+/* Everything below turns the record above into something a chart can draw. */
+/* Kept here rather than in the chart code so it is testable without a DOM, */
+/* and so the in-app screen and the public page cannot drift apart.         */
+/* ======================================================================== */
+
+const DAY_MS = 86400000;
+
+/** Midnight local, as a Date, for a day key or an epoch. */
+function startOfDay(at) {
+  const d = new Date(typeof at === 'string' ? at + 'T00:00:00' : at * 1000);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * A day-by-day activity grid, the shape a contribution calendar has: one column
+ * per week, Monday at the top.
+ *
+ * Level is a rank rather than a raw count, because one enormous session would
+ * otherwise flatten every other day to the bottom of the scale. Four levels,
+ * cut on the quantiles of the days actually flown, so the scale describes this
+ * pilot's own year rather than an absolute idea of a busy day.
+ */
+export function activityCalendar(perSession, { days = 371, today = Date.now() } = {}) {
+  const byDay = new Map();
+  for (const s of perSession) {
+    if (!s.at) continue;
+    const k = dayKey(s.at);
+    const cur = byDay.get(k) || { laps: 0, sessions: 0, best: null, airTimeS: 0 };
+    cur.laps += s.lapsClean;
+    cur.sessions += 1;
+    cur.airTimeS += s.airTimeS || 0;
+    if (s.best != null && (cur.best == null || s.best < cur.best)) cur.best = s.best;
+    byDay.set(k, cur);
+  }
+
+  /* Quantile cuts over the days that have laps. With very few days the cuts
+   * collapse onto each other; ranking still works, it just uses fewer levels. */
+  const counts = [...byDay.values()].map(v => v.laps).filter(n => n > 0).sort((a, b) => a - b);
+  const cut = q => (counts.length ? quantile(counts, q) : 0);
+  const cuts = [cut(0.25), cut(0.5), cut(0.75)];
+  const levelFor = laps => {
+    if (!laps) return 0;
+    if (laps <= cuts[0]) return 1;
+    if (laps <= cuts[1]) return 2;
+    if (laps <= cuts[2]) return 3;
+    return 4;
+  };
+
+  /* End on the Sunday of this week so the grid is whole columns. */
+  const end = startOfDay(today / 1000);
+  end.setDate(end.getDate() + (7 - ((end.getDay() + 6) % 7) - 1));
+  const start = new Date(end.getTime() - (days - 1) * DAY_MS);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));  /* back to Monday */
+
+  const cells = [];
+  for (let t = start.getTime(); t <= end.getTime(); t += DAY_MS) {
+    const d = new Date(t);
+    const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const hit = byDay.get(key);
+    cells.push({
+      key,
+      at: Math.floor(t / 1000),
+      weekday: (d.getDay() + 6) % 7,           /* 0 = Monday */
+      week: Math.floor((t - start.getTime()) / (7 * DAY_MS)),
+      laps: hit ? hit.laps : 0,
+      sessions: hit ? hit.sessions : 0,
+      best: hit ? hit.best : null,
+      airTimeS: hit ? round2(hit.airTimeS) : 0,
+      level: levelFor(hit ? hit.laps : 0),
+      future: t > startOfDay(today / 1000).getTime(),
+    });
+  }
+  return { cells, weeks: (cells[cells.length - 1]?.week ?? 0) + 1, cuts, daysFlown: byDay.size };
+}
+
+/**
+ * Days flown, and how they run together.
+ *
+ * A current streak that has already been broken is not a current streak, so it
+ * only counts when the last day flown is today or yesterday — anything else is
+ * a streak that ended, and reporting it as live is the kind of flattery that
+ * makes a number worthless.
+ */
+export function streaks(perSession, { today = Date.now() } = {}) {
+  const daySet = new Set(perSession.filter(s => s.at && s.lapsClean > 0).map(s => dayKey(s.at)));
+  const days = [...daySet].sort();
+  if (!days.length) {
+    return { daysFlown: 0, current: 0, longest: 0, live: false, lastFlown: null,
+             thisMonth: 0, thisYear: 0 };
+  }
+
+  let longest = 1, run = 1;
+  for (let i = 1; i < days.length; i++) {
+    const prev = startOfDay(days[i - 1]).getTime();
+    const cur = startOfDay(days[i]).getTime();
+    run = (cur - prev === DAY_MS) ? run + 1 : 1;
+    if (run > longest) longest = run;
+  }
+
+  /* Walk back from the last day flown. */
+  let current = 1;
+  for (let i = days.length - 1; i > 0; i--) {
+    const a = startOfDay(days[i - 1]).getTime(), b = startOfDay(days[i]).getTime();
+    if (b - a === DAY_MS) current++; else break;
+  }
+  const t0 = startOfDay(today / 1000).getTime();
+  const last = startOfDay(days[days.length - 1]).getTime();
+  const live = (t0 - last) <= DAY_MS;
+
+  const now = new Date(today);
+  const monthPrefix = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const yearPrefix = String(now.getFullYear());
+
+  return {
+    daysFlown: days.length,
+    current: live ? current : 0,
+    longest,
+    live,
+    lastFlown: days[days.length - 1],
+    thisMonth: days.filter(d => d.startsWith(monthPrefix)).length,
+    thisYear: days.filter(d => d.startsWith(yearPrefix)).length,
+  };
+}
+
+/** Every clean lap as a point, for a scatter of pace over time. */
+export function lapScatter(perSession) {
+  const pts = [];
+  for (const s of perSession) {
+    if (!s.at) continue;
+    let n = 0;
+    for (const lap of s.laps) {
+      if (!lap.ok) continue;
+      pts.push({ at: s.at, t: lap.time, runId: s.runId, lapNumber: ++n });
+    }
+  }
+  return pts;
+}
+
+/**
+ * A histogram of clean laps.
+ *
+ * Freedman–Diaconis for the bin width — 2·IQR/n^(1/3) — because a fixed bin
+ * count either buries the shape of a tight pilot's laps in one bar or shatters
+ * a loose one into noise. Falls back to a fixed count when the IQR is zero,
+ * which a metronomic session really can produce.
+ */
+export function distribution(times, { maxBins = 24 } = {}) {
+  const xs = (times || []).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+  if (xs.length < 2) return { bins: [], lo: null, hi: null, width: null };
+
+  const lo = xs[0], hi = xs[xs.length - 1];
+  const iqr = quantile(xs, 0.75) - quantile(xs, 0.25);
+  let width = iqr > 0 ? 2 * iqr / Math.cbrt(xs.length) : (hi - lo) / 8;
+  if (!(width > 0)) width = 0.1;
+  let count = Math.ceil((hi - lo) / width) || 1;
+  if (count > maxBins) { count = maxBins; width = (hi - lo) / count; }
+
+  const bins = Array.from({ length: count }, (_, i) => ({
+    from: round3(lo + i * width), to: round3(lo + (i + 1) * width), n: 0,
+  }));
+  for (const x of xs) {
+    let i = Math.floor((x - lo) / width);
+    if (i >= count) i = count - 1;      /* the maximum lands in the last bin */
+    if (i < 0) i = 0;
+    bins[i].n++;
+  }
+  return { bins, lo: round3(lo), hi: round3(hi), width: round3(width) };
+}
+
+/** The handful of "most ever" figures a season page leads with. */
+export function records(perSession) {
+  const withLaps = perSession.filter(s => s.lapsClean > 0);
+  const byDay = new Map();
+  for (const s of withLaps) {
+    const k = dayKey(s.at);
+    byDay.set(k, (byDay.get(k) || 0) + s.lapsClean);
+  }
+  let bestDay = null;
+  for (const [key, laps] of byDay) if (!bestDay || laps > bestDay.laps) bestDay = { key, laps };
+
+  const most = withLaps.reduce((a, s) => (!a || s.lapsClean > a.lapsClean ? s : a), null);
+  const longest = withLaps.reduce((a, s) => (!a || s.airTimeS > a.airTimeS ? s : a), null);
+  const tidiest = withLaps
+    .filter(s => s.consistency != null && s.lapsClean >= 5)
+    .reduce((a, s) => (!a || s.consistency < a.consistency ? s : a), null);
+
+  return {
+    mostLapsInSession: most ? { laps: most.lapsClean, at: most.at } : null,
+    mostLapsInDay: bestDay,
+    longestSession: longest ? { airTimeS: longest.airTimeS, at: longest.at } : null,
+    tidiestSession: tidiest
+      ? { consistency: tidiest.consistency, at: tidiest.at, laps: tidiest.lapsClean } : null,
+  };
+}
+
+/** Everything the dashboard draws, in one call. */
+export function dashboardSeries(rec, opts = {}) {
+  const per = rec.sessions || [];
+  const clean = [];
+  for (const s of per) for (const lap of s.laps) if (lap.ok) clean.push(lap.time);
+  return {
+    calendar: activityCalendar(per, opts),
+    streaks: streaks(per, opts),
+    scatter: lapScatter(per),
+    distribution: distribution(clean),
+    records: records(per),
+    /* Per-session consistency, for the trend of how tidy the flying is. */
+    consistency: per.filter(s => s.consistency != null)
+      .map(s => ({ at: s.at, v: s.consistency, laps: s.lapsClean })),
+    sessionPace: per.filter(s => s.medianLap != null)
+      .map(s => ({ at: s.at, best: s.best, pace: s.medianLap, laps: s.lapsClean })),
+  };
 }

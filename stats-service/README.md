@@ -117,6 +117,17 @@ npx wrangler d1 execute whooptimer-stats --remote \
 
 Run a public leaderboard knowing that is the whole of the tooling.
 
+## What a pilot page weighs
+
+`GET /v1/pilots/:id` returns the whole record, every lap included, because the
+dashboard draws the laps — the scatter is one point per lap and the histogram
+bins them. That is about **1.1 KB per session**: a club pilot with two hundred
+sessions is a 220 KB response, and the 2000-session cap puts the ceiling around
+2 MB before compression. Cloudflare compresses it and caches it for sixty
+seconds at the edge, and the chart itself only draws the most recent three
+thousand laps, so the cost is bandwidth rather than a page that will not open.
+If that is too much for your club, lower `MAX_SESSIONS_PER_PILOT`.
+
 ## Costs
 
 A session row is a few hundred bytes. A club of twenty pilots flying weekly for

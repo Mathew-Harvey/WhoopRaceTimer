@@ -10,5 +10,8 @@ __pycache__/
 .venv/
 node_modules/
 
+# wrangler's local D1, written by `wrangler dev --local`
+.wrangler/
+
 # built at deploy time from Mathew-Harvey/LandingWhoopTimer
 static/landing/

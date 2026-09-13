@@ -12,7 +12,8 @@
  * the person holding the phone.
  */
 'use strict';
-import { aggregate, fmtDuration, fmtLap } from './aggregate.js';
+import { aggregate, fmtLap } from './aggregate.js';
+import { dashboard } from './dashboard.js';
 import * as publish from './publish.js';
 import * as store from './store.js';
 import { h, mount } from './ui.js';
@@ -20,7 +21,6 @@ import { h, mount } from './ui.js';
 const page = document.getElementById('page');
 const params = new URLSearchParams(location.search);
 
-const card = (...kids) => h('div.card', ...kids);
 const when = at => at ? new Date(at * 1000).toLocaleDateString(undefined,
   { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
 
@@ -32,89 +32,19 @@ function header(title, sub) {
     h('a.pill', { href: '../' }, 'Open the timer'));
 }
 
-function stat(label, value, tone) {
-  return h('div', h('div.cap', label),
-    h('div.v', { style: tone ? { color: `var(--t-${tone})` } : null }, value));
-}
-
-function statGrid(rec) {
-  return h('div.statgrid',
-    stat('Best lap', fmtLap(rec.best.lap), 'purple'),
-    stat('Best consecutive', fmtLap(rec.best.consec)),
-    stat('Race pace', fmtLap(rec.pace)),
-    stat('Sessions', String(rec.totals.sessions)),
-    stat('Clean laps', String(rec.totals.lapsClean)),
-    stat('Air time', fmtDuration(rec.totals.airTimeS)));
-}
-
-function periodTable(rows, label) {
-  if (!rows || !rows.length) return null;
-  return h('div.tablewrap',
-    h('table',
-      h('thead', h('tr', ...[label, 'Sessions', 'Laps', 'Best', 'Pace', 'Air time']
-        .map(t => h('th', { class: 'cap' }, t)))),
-      h('tbody', ...[...rows].reverse().slice(0, 26).map(r => h('tr',
-        h('td', h('strong', r.key)),
-        h('td.num', String(r.sessions)),
-        h('td.num', String(r.lapsClean)),
-        h('td.num', fmtLap(r.best)),
-        h('td.num', fmtLap(r.pace)),
-        h('td.num', fmtDuration(r.airTimeS)))))));
-}
-
+/**
+ * One pilot's page.
+ *
+ * The cards are the same cards the pilot sees on their own phone, built by the
+ * same code from the same aggregation — see dashboard.js. Only the sentence
+ * under the name differs, because only that depends on whose page this is.
+ */
 function pilotView(name, rec, { since, local } = {}) {
-  const periods = [['day', 'Day'], ['week', 'Week'], ['month', 'Month']];
-  let which = 'day';
-  const table = h('div');
-  const draw = () => mount(table, periodTable(rec.periods[which], periods.find(p => p[0] === which)[1]));
-  draw();
-
   return h('div.stack',
     header(name, local
       ? 'From this browser only — nothing here has been published.'
       : `Publishing since ${when(since)}`),
-
-    card(statGrid(rec)),
-
-    rec.totals.stoppages ? h('div.note',
-      h('strong', `${rec.totals.lapsRecorded} laps flown, ${rec.totals.lapsClean} counted`),
-      rec.totals.stoppages === 1
-        ? 'One was a battery change, a crash or a double trigger. It counts as a lap flown ' +
-          'but not as a lap time — otherwise one battery change makes an average lap look ' +
-          'like several minutes.'
-        : `${rec.totals.stoppages} were battery changes, crashes or double triggers. They ` +
-          `count as laps flown but not as lap times — otherwise one battery change makes an ` +
-          `average lap look like several minutes.`) : null,
-
-    rec.form.paceDelta != null && rec.totals.sessionsWithLaps > rec.form.last5.sessions ? card(
-      h('h3', 'Form'),
-      h('p.muted', rec.form.paceDelta < 0
-        ? `The last five sessions are ${Math.abs(rec.form.paceDelta).toFixed(2)}s a lap quicker than the career pace.`
-        : `The last five sessions are ${rec.form.paceDelta.toFixed(2)}s a lap off the career pace.`),
-      h('div.statgrid',
-        stat('Recent pace', fmtLap(rec.form.last5.pace)),
-        stat('Career pace', fmtLap(rec.form.allTime.pace)),
-        stat('Recent best', fmtLap(rec.form.last5.best)))) : null,
-
-    rec.totals.sessions ? card(
-      h('div.row', { style: { justifyContent: 'space-between' } },
-        h('h3', 'Over time'),
-        h('div.seg', ...periods.map(([k, label]) => h('button', {
-          'aria-pressed': which === k,
-          onclick: e => {
-            which = k;
-            for (const b of e.target.parentNode.children) b.setAttribute('aria-pressed', 'false');
-            e.target.setAttribute('aria-pressed', 'true');
-            draw();
-          },
-        }, label)))),
-      table) : null,
-
-    h('p.muted', { style: { fontSize: 'var(--t-13)' } },
-      'Lap times are cleaned before they are counted: a lap more than three times the ' +
-      'session median is treated as a stoppage, and the rest are judged against the ' +
-      'session’s own median and median absolute deviation rather than a mean, which one ' +
-      'battery change is enough to ruin.'));
+    ...dashboard(rec, { own: false }));
 }
 
 function leaderboardView(pilots) {

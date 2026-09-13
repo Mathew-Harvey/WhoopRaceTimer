@@ -11,7 +11,7 @@
 import {
   aggregate, bestConsecutive, cleanLaps, dayKey, fmtDuration, fmtLap,
   leaderboard, mad, mean, median, monthKey, quantile, REASONS, rollup, sessionStats,
-  stdev, weekKey, MIN_LAPS_FOR_MAD, STOPPAGE_FACTOR,
+  stdev, weekKey, fmtSpread, MIN_LAPS_FOR_MAD, STOPPAGE_FACTOR,
 } from '../static/js/aggregate.js';
 
 let failures = 0;
@@ -328,7 +328,197 @@ const reasons = r => r.laps.map(l => l.reason);
   eq('a short duration', fmtDuration(45), '45s');
   eq('minutes and seconds', fmtDuration(125), '2m 05s');
   eq('hours', fmtDuration(7325), '2h 02m');
+
+  /* Consistency is a ratio, not a time, and the formatter is the only thing
+   * standing between that and a dashboard that says "0.02s spread". */
+  eq('consistency prints as a percentage', fmtSpread(0.0153), '1.5%');
+  eq('  and copes with nothing to print', fmtSpread(null), '—');
 }
 
+
+/* ==================================================================== */
+/* Dashboard series                                                      */
+/* ==================================================================== */
+{
+  const { activityCalendar, streaks, lapScatter, distribution, records, dashboardSeries } =
+    await import('../static/js/aggregate.js');
+
+  const day = (y, m, d, h = 12) => new Date(y, m - 1, d, h).getTime() / 1000;
+  const mk = (at, times) => ({
+    runId: 'r' + at, at, mode: 'practice', consecN: 3, minLap: 1,
+    results: [{ pos: 1, name: 'Kez', channel: 'R1', lapTimes: times }],
+  });
+  const TODAY = new Date(2026, 8, 13, 18).getTime();   /* Sun 13 Sep 2026 */
+
+  /* ---- the calendar ---- */
+  {
+    const rec = aggregate([
+      mk(day(2026, 9, 11), [24, 23.8, 24.1]),
+      mk(day(2026, 9, 12), [24, 23.8, 24.1, 23.9, 24.2, 24.0, 23.7, 24.3]),
+      mk(day(2026, 9, 12, 16), [24, 23.9]),
+      mk(day(2026, 9, 13), [24, 23.8, 24.1, 23.9]),
+    ], { pilotName: 'Kez' });
+    const cal = activityCalendar(rec.sessions, { today: TODAY });
+
+    eq('the calendar is whole weeks', cal.cells.length % 7, 0);
+    eq('  three days were flown', cal.daysFlown, 3);
+    const flown = cal.cells.filter(c => c.laps > 0);
+    eq('  and three cells carry laps', flown.length, 3);
+
+    const d12 = cal.cells.find(c => c.key === '2026-09-12');
+    eq('two sessions on one day are one cell', d12.sessions, 2);
+    eq('  with their laps added up', d12.laps, 10);
+    check('  at the top level of the scale', d12.level === 4, `level ${d12.level}`);
+
+    const d11 = cal.cells.find(c => c.key === '2026-09-11');
+    check('a quieter day sits lower on the scale', d11.level < d12.level,
+          `${d11.level} vs ${d12.level}`);
+    eq('a day not flown is level zero', cal.cells.find(c => c.key === '2026-09-10').level, 0);
+
+    /* Monday first, and every column a full week. */
+    eq('the grid starts on a Monday', cal.cells[0].weekday, 0);
+    check('  and no cell is beyond today+this week',
+          cal.cells.every(c => c.week >= 0 && c.week < cal.weeks));
+    check('  today is in it', !!cal.cells.find(c => c.key === '2026-09-13'));
+    /* Days after today are marked, so a chart can draw them as empty rather
+     * than as days nobody flew. */
+    check('  and the rest of this week is marked future',
+          cal.cells.filter(c => c.future).every(c => c.laps === 0));
+  }
+
+  /* ---- streaks ---- */
+  {
+    const three = [mk(day(2026, 9, 11), [24, 23, 24]), mk(day(2026, 9, 12), [24, 23, 24]),
+                   mk(day(2026, 9, 13), [24, 23, 24])];
+    const s = streaks(aggregate(three, { pilotName: 'Kez' }).sessions, { today: TODAY });
+    eq('three days running', s.current, 3);
+    eq('  which is also the longest', s.longest, 3);
+    eq('  and it is live', s.live, true);
+    eq('  three days flown', s.daysFlown, 3);
+
+    /* A streak that ended is not a current streak. */
+    const old = [mk(day(2026, 8, 1), [24, 23, 24]), mk(day(2026, 8, 2), [24, 23, 24]),
+                 mk(day(2026, 8, 3), [24, 23, 24])];
+    const s2 = streaks(aggregate(old, { pilotName: 'Kez' }).sessions, { today: TODAY });
+    eq('a streak from last month is not current', s2.current, 0);
+    eq('  but it is still the longest', s2.longest, 3);
+    eq('  and it is not live', s2.live, false);
+
+    /* Yesterday still counts as live: nobody has flown yet today. */
+    const y = [mk(day(2026, 9, 11), [24, 23, 24]), mk(day(2026, 9, 12), [24, 23, 24])];
+    const s3 = streaks(aggregate(y, { pilotName: 'Kez' }).sessions, { today: TODAY });
+    eq('yesterday keeps a streak alive', s3.current, 2);
+    eq('  and live', s3.live, true);
+
+    /* A gap breaks it. */
+    const gap = [mk(day(2026, 9, 9), [24, 23, 24]), mk(day(2026, 9, 12), [24, 23, 24]),
+                 mk(day(2026, 9, 13), [24, 23, 24])];
+    const s4 = streaks(aggregate(gap, { pilotName: 'Kez' }).sessions, { today: TODAY });
+    eq('a gap breaks the run', s4.current, 2);
+    eq('  and the longest is the longest unbroken run', s4.longest, 2);
+    eq('  days flown counts all of them', s4.daysFlown, 3);
+
+    eq('nothing flown, nothing claimed', streaks([], { today: TODAY }).current, 0);
+  }
+
+  /* ---- the scatter and the histogram ---- */
+  {
+    const rec = aggregate([mk(day(2026, 9, 12), [24.0, 23.8, 500.0, 24.1, 23.9, 24.2])],
+                          { pilotName: 'Kez' });
+    const pts = lapScatter(rec.sessions);
+    eq('the scatter is clean laps only', pts.length, 5);
+    check('  so a battery change is not a point', pts.every(p => p.t < 100));
+    eq('  numbered as flown', pts[0].lapNumber, 1);
+
+    const d = distribution([20, 21, 21, 22, 22, 22, 23, 23, 24]);
+    check('a histogram has bins', d.bins.length >= 2, `got ${d.bins.length}`);
+    eq('  every lap lands in one', d.bins.reduce((a, b) => a + b.n, 0), 9);
+    check('  the maximum is not lost off the end',
+          d.bins[d.bins.length - 1].to >= 24 - 1e-9);
+    eq('  and it spans the data', d.lo, 20);
+
+    /* A metronomic pilot has an IQR of zero, which is a division waiting to
+     * happen. */
+    const flat = distribution([24, 24, 24, 24, 24, 24]);
+    eq('a flat distribution does not divide by zero',
+       flat.bins.reduce((a, b) => a + b.n, 0), 6);
+
+    /* Zero IQR with a real spread. The metronomic case above cannot tell the
+     * fallback width apart from the last-resort 0.1, because its range is zero
+     * too and both land in the same place. Here they do not: half the range
+     * over eight is one second, and 0.1 would ask for eighty bins. */
+    const spread = distribution([20, 24, 24, 24, 24, 24, 24, 24, 24, 28]);
+    eq('no IQR still bins by the range, not by a hard-coded floor',
+       spread.bins.length, 8);
+    eq('  with every lap in one', spread.bins.reduce((a, b) => a + b.n, 0), 10);
+
+    /* The bin cap makes the width divide the range exactly, and that is the
+     * only arrangement in which the slowest lap indexes one bin past the end.
+     * Without the clamp this throws rather than quietly mis-binning, so the
+     * assertion that matters is that the call returns at all. */
+    const wide = distribution([
+      ...Array(16).fill(23), ...Array(16).fill(25), 20, 68,
+    ]);
+    eq('the bin cap holds', wide.bins.length, 24);
+    eq('  and the slowest lap is still counted',
+       wide.bins.reduce((a, b) => a + b.n, 0), 34);
+    eq('  in the last bin', wide.bins[wide.bins.length - 1].n, 1);
+
+    eq('one lap is not a distribution', distribution([24]).bins.length, 0);
+    eq('no laps either', distribution([]).bins.length, 0);
+  }
+
+  /* ---- records ---- */
+  {
+    const rec = aggregate([
+      mk(day(2026, 9, 11), [24, 23.8, 24.1]),
+      mk(day(2026, 9, 12), [24, 23.8, 24.1, 23.9, 24.2, 24.0, 23.7]),
+      mk(day(2026, 9, 12, 16), [24, 23.9, 24.1]),
+    ], { pilotName: 'Kez' });
+    const r = records(rec.sessions);
+    eq('most laps in one session', r.mostLapsInSession.laps, 7);
+    eq('most laps in one day counts both sessions', r.mostLapsInDay.laps, 10);
+    eq('  on the right day', r.mostLapsInDay.key, '2026-09-12');
+    check('the longest session is a session', r.longestSession.airTimeS > 0);
+
+    eq('no sessions, no records', records([]).mostLapsInSession, null);
+  }
+
+  /* ---- the record survives the wire ----
+   * The public page does not compute the record; it is handed one as JSON by
+   * the worker. If anything the dashboard reads were dropped or reshaped in
+   * that trip the charts would come out empty on the public page and full on
+   * the pilot's own phone, which is the one failure this whole arrangement of
+   * sharing aggregate() with the server exists to prevent. */
+  {
+    const rec = aggregate([
+      mk(day(2026, 9, 10), [24, 23.8, 24.1, 300, 23.9, 24.2, 24.0]),
+      mk(day(2026, 9, 12), [23.5, 23.7, 23.4, 23.9, 23.6]),
+    ], { pilotName: 'Kez' });
+    const overTheWire = JSON.parse(JSON.stringify(rec));
+    const here = dashboardSeries(rec, { today: TODAY });
+    const there = dashboardSeries(overTheWire, { today: TODAY });
+    eq('the wire keeps every lap of the scatter', there.scatter.length, here.scatter.length);
+    check('  and the whole dashboard is identical',
+          JSON.stringify(there) === JSON.stringify(here));
+    check('  including the laps the cleaning threw out',
+          overTheWire.sessions[0].laps.some(l => !l.ok));
+  }
+
+  /* ---- one call for the whole dashboard ---- */
+  {
+    const rec = aggregate([mk(day(2026, 9, 12), [24, 23.8, 24.1, 23.9, 24.2])],
+                          { pilotName: 'Kez' });
+    const s = dashboardSeries(rec, { today: TODAY });
+    check('the dashboard series has everything it draws',
+          !!(s.calendar && s.streaks && s.scatter && s.distribution && s.records &&
+             s.consistency && s.sessionPace));
+    eq('  and an empty record does not throw',
+       dashboardSeries(aggregate([], { pilotName: 'x' }), { today: TODAY }).streaks.daysFlown, 0);
+  }
+}
+
+/* The epilogue belongs at the very bottom. Anything below it runs with its
+ * failures counted and never reported, which is worth exactly nothing. */
 if (failures) { console.error(`\n${failures} failure(s)`); process.exit(1); }
-console.log('aggregation: cleaning, periods and the pilot record all hold');
+console.log('aggregation: cleaning, periods, the pilot record and the dashboard series all hold');

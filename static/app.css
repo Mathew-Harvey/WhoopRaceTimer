@@ -611,3 +611,93 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
     transition-duration:.01ms!important}
 }
+
+/* ================================================================ stats == */
+/* The dashboard: tokens first, then the pieces. Shared by the in-app Stats
+   screen and the public /stats/ page, which is why it lives here rather than
+   in a <style> block on one of them.
+
+   The activity ramp and the two-series pair below were not chosen by eye. They
+   were checked against the chart surface (--recess) in each theme for
+   monotone lightness, a visible gap between steps, and a light end that still
+   clears the surface. Changing a value here means re-running that check. */
+:root{
+  --cal-0:#1a2029;
+  --cal-1:#5d4188; --cal-2:#8654cc; --cal-3:#aa7af4; --cal-4:#c9adfd;
+  --c-best:var(--t-purple);   /* the pilot's own best — emphasis */
+  --c-pace:var(--fg-3);       /* everything else — deliberately gray */
+  --c-hist:#8654cc;
+}
+:root[data-theme="day"]{
+  --cal-0:#dde2e9;
+  --cal-1:#a387d5; --cal-2:#804ec5; --cal-3:#592097; --cal-4:#2e0d52;
+  --c-hist:#804ec5;
+}
+
+.statgrid{display:grid;gap:var(--s4);grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}
+.statgrid.tight{gap:var(--s3);margin-bottom:var(--s3)}
+.statgrid .stat{display:grid;gap:2px;justify-items:start;min-width:0}
+.statgrid .v{font-family:var(--font-num);font-size:var(--t-24);font-weight:700;
+  color:var(--t-plain);line-height:1.15}
+.statgrid .v[data-tone=purple]{color:var(--t-purple)}
+.statgrid .v[data-tone=green]{color:var(--t-green)}
+
+.fighead{display:grid;grid-template-columns:1fr auto;align-items:start;
+  gap:var(--s2) var(--s3);margin-bottom:var(--s3)}
+.fignote{margin-top:2px;font-size:var(--t-13);max-width:62ch}
+.tabletoggle{flex:none;font-size:var(--t-13);min-height:36px;padding:7px 12px;
+  border:1px solid var(--line)}
+.tabletoggle[aria-pressed=true]{background:var(--surface-3);border-color:var(--edge);color:var(--fg)}
+
+.legend{display:flex;flex-wrap:wrap;gap:var(--s3);margin-bottom:var(--s2)}
+.legitem{display:inline-flex;align-items:center;gap:6px;font-size:var(--t-13);
+  color:var(--fg-2);font-weight:600}
+.swatch{width:12px;height:12px;border-radius:3px;flex:none;display:inline-block}
+
+/* The plot itself sits in a recess, which is the surface the palette was
+   validated against. */
+.chart{position:relative;width:100%;min-width:0;background:var(--recess);
+  border-radius:var(--r2);padding:var(--s3);overflow:hidden}
+.chartbody{position:relative;min-width:0}
+.chart svg{display:block;max-width:100%}
+.chart .grid{stroke:var(--line-subtle);stroke-width:1}
+.chart .axis{font:600 var(--t-13)/1 var(--font-num);fill:var(--fg-3)}
+.chart .endlab{font:700 var(--t-13)/1 var(--font-cond)}
+.chart .cross{stroke:var(--edge);stroke-width:1;stroke-dasharray:3 3}
+.chart .crossdot{stroke:var(--recess);stroke-width:2}
+.chart .pbdot{stroke:var(--recess);stroke-width:2}
+.chart .calcell{cursor:default}
+.chart .calcell:hover{stroke:var(--fg);stroke-width:1.5}
+.chart .bar{cursor:default}
+.chart .bar:hover{fill:var(--cal-3)}
+
+.charttip{position:absolute;z-index:5;pointer-events:none;min-width:120px;
+  background:var(--surface-2);border:1px solid var(--edge);border-radius:var(--r1);
+  padding:var(--s2) var(--s3);font-size:var(--t-13);color:var(--fg);
+  box-shadow:var(--shadow-1)}
+.charttip strong{display:block;margin-bottom:3px;font-size:var(--t-13);color:var(--fg)}
+.tiprow{display:flex;justify-content:space-between;gap:var(--s3);color:var(--fg-3)}
+.tiprow b{color:var(--fg);font-family:var(--font-num)}
+
+.calscroll{overflow-x:auto}
+.callegend{display:flex;align-items:center;gap:5px;margin-top:var(--s2);justify-content:flex-end}
+.callegend .cap{color:var(--fg-3)}
+.callegend .swatch{width:11px;height:11px}
+
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tablewrap table{width:100%;border-collapse:collapse;font-size:var(--t-15)}
+.tablewrap th,.tablewrap td{padding:7px 8px;border-top:1px solid var(--line-subtle);
+  white-space:nowrap}
+.tablewrap thead th{border-top:none;color:var(--fg-3)}
+.tablewrap td.num{font-family:var(--font-num)}
+.tabledrop{margin-top:var(--s3)}
+.tabledrop summary{cursor:pointer;color:var(--fg-3);padding:var(--s1) 0}
+.tabledrop summary:hover{color:var(--fg-2)}
+
+.finenote{font-size:var(--t-13);max-width:78ch}
+
+@media (max-width:560px){
+  .statgrid{gap:var(--s3);grid-template-columns:repeat(auto-fit,minmax(88px,1fr))}
+  .statgrid .v{font-size:var(--t-20)}
+  .chart{padding:var(--s2)}
+}

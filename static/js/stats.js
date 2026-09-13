@@ -13,7 +13,8 @@
  * after the decision is a formality rather than a choice.
  */
 'use strict';
-import { aggregate, fmtDuration, fmtLap, REASONS } from './aggregate.js';
+import { aggregate, REASONS } from './aggregate.js';
+import { dashboard } from './dashboard.js';
 import * as pilot from './pilot.js';
 import * as publish from './publish.js';
 import * as store from './store.js';
@@ -239,142 +240,60 @@ function deleteSheet(app) {
 
 /* ---------------------------------------------------------------- screen -- */
 
-const PERIODS = [['day', 'Days'], ['week', 'Weeks'], ['month', 'Months']];
-
-function stat(label, value, tone) {
-  return h('div.stat', { style: { display: 'grid', gap: '2px', justifyItems: 'start' } },
-    h('div.cap', label),
-    h('div.num', { style: { fontSize: 'var(--t-24)', fontWeight: '700',
-                            color: tone ? `var(--t-${tone})` : 'var(--t-plain)' } }, value));
-}
-
-/** The personal best over time, as one line. Small enough to read at a glance
- *  and the only chart that answers "am I getting quicker". */
-function progressionChart(points) {
-  if (points.length < 2) return null;
-  const W = 600, H = 120, PAD = 8;
-  const bests = points.map(p => p.best);
-  const lo = Math.min(...bests), hi = Math.max(...bests);
-  const span = (hi - lo) || 1;
-  const x = i => PAD + (i / (points.length - 1)) * (W - PAD * 2);
-  const y = v => PAD + (1 - (v - lo) / span) * (H - PAD * 2);
-  const line = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(p.best).toFixed(1)}`).join(' ');
-  const dots = points.map((p, i) => h('circle', {
-    cx: x(i).toFixed(1), cy: y(p.sessionBest ?? p.best).toFixed(1), r: 2.5,
-    style: { fill: 'var(--fg-3)' },
-  }));
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `Personal best over ${points.length} sessions, ` +
-                                 `from ${fmtLap(bests[0])} to ${fmtLap(bests[bests.length - 1])}`);
-  svg.style.width = '100%';
-  svg.style.height = 'auto';
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', line);
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke-width', '2.5');
-  path.style.stroke = 'var(--t-purple)';
-  for (const d of dots) svg.appendChild(d);
-  svg.appendChild(path);
-  return h('div', { style: { background: 'var(--recess)', borderRadius: 'var(--r2)',
-                             padding: 'var(--s3)' } }, svg);
-}
-
-function periodTable(rows) {
-  if (!rows.length) return h('p.muted', 'Nothing here yet.');
-  return h('div', { style: { overflowX: 'auto' } },
-    h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 'var(--t-15)' } },
-      h('thead', h('tr',
-        ...['', 'Sessions', 'Laps', 'Best', 'Pace', 'Air time'].map(t =>
-          h('th', { class: 'cap', style: { textAlign: t ? 'right' : 'left', padding: '6px 8px' } }, t)))),
-      h('tbody', ...[...rows].reverse().map(r => h('tr',
-        h('td', { style: { padding: '6px 8px', borderTop: '1px solid var(--line-subtle)' } },
-          h('strong', r.key)),
-        ...[r.sessions, r.lapsClean, fmtLap(r.best), fmtLap(r.pace), fmtDuration(r.airTimeS)]
-          .map(v => h('td', { class: 'num', style: { textAlign: 'right', padding: '6px 8px',
-                                                     borderTop: '1px solid var(--line-subtle)' } }, v)))))));
-}
-
+/**
+ * The Stats screen.
+ *
+ * The dashboard itself is not built here. It is built by dashboard.js, which
+ * the public page also uses, so a pilot's own screen and the page they share
+ * cannot end up disagreeing about their own record. What is local to this
+ * screen is the two things the public page has no business showing: which of
+ * the names on this device to look at, and whether to publish.
+ */
 SCREENS.stats = app => {
   const node = h('div.screen');
   const names = knownNames();
   const name = focusName();
-  const rec = localRecord(name);
+  const rec = name ? localRecord(name) : null;
   const p = pilot.get();
-  let period = store.load('statsPeriod', 'day');
 
-  const body = h('div.stack');
-  const draw = () => mount(body,
-    !name ? h('div.card', h('p.muted',
-      'No sessions saved on this device yet. Fly one and it lands here.')) : null,
+  const heading = name ? h('div.row', { style: { justifyContent: 'space-between',
+                                                 alignItems: 'baseline',
+                                                 marginBottom: 'var(--s3)' } },
+    h('h3', name),
+    names.length > 1 ? h('select', {
+      'aria-label': 'Which pilot',
+      style: { width: 'auto', minWidth: '140px' },
+      onchange: e => { store.save('statsName', e.target.value); app.render(); },
+    }, ...names.map(n => h('option', { value: n, selected: n === name }, n))) : null) : null;
 
-    name ? h('div.card',
-      h('div.row', { style: { justifyContent: 'space-between', alignItems: 'baseline' } },
-        h('h3', name),
-        names.length > 1 ? h('select', {
-          'aria-label': 'Which pilot',
-          onchange: e => { store.save('statsName', e.target.value); app.render(); },
-        }, ...names.map(n => h('option', { value: n, selected: n === name }, n))) : null),
-      h('div', { style: { display: 'grid', gap: 'var(--s4)', marginTop: 'var(--s3)',
-                          gridTemplateColumns: 'repeat(auto-fit,minmax(110px,1fr))' } },
-        stat('Best lap', fmtLap(rec.best.lap), 'purple'),
-        stat(`Best ${rec.sessions[0]?.consecN || 3}`, fmtLap(rec.best.consec)),
-        stat('Race pace', fmtLap(rec.pace)),
-        stat('Sessions', String(rec.totals.sessions)),
-        stat('Clean laps', String(rec.totals.lapsClean)),
-        stat('Air time', fmtDuration(rec.totals.airTimeS)))) : null,
+  const publishing = h('div.card',
+    h('h3', 'Publishing'),
+    h('p.muted', p.consent === pilot.CONSENT.public
+      ? `Publishing as ${p.name}.` + (publish.queueSize()
+          ? ` ${plural(publish.queueSize(), 'session')} waiting for signal.` : '')
+      : 'Everything above is on this device only. Nothing has been uploaded.'),
+    publish.pilotUrl(p.id)
+      ? h('p', h('a', { href: publish.pilotUrl(p.id) }, publish.pilotUrl(p.id))) : null,
+    /* Straight to the question when there is a question to ask. Routing a
+     * first-time yes through a settings sheet that then offers the same
+     * button again is a step that exists only because the code was
+     * organised that way. */
+    h('button.ghost', {
+      onclick: () => (p.consent === pilot.CONSENT.public ? publishingSheet(app) : askToPublish(app)),
+    }, p.consent === pilot.CONSENT.public ? 'Publishing settings' : 'Publish my times'));
 
-    name && rec.progression.length > 1 ? h('div.card',
-      h('h3', 'Personal best over time'),
-      /* Form against career only says something once there is a career to
-       * compare against. With five sessions the last five are the career, and
-       * "0.00s off your career pace" is a true sentence that means nothing. */
-      h('p.muted', rec.form.paceDelta != null && rec.totals.sessionsWithLaps > rec.form.last5.sessions
-        ? (rec.form.paceDelta < 0
-            ? `Your last five sessions are ${Math.abs(rec.form.paceDelta).toFixed(2)}s a lap quicker than your career pace.`
-            : `Your last five sessions are ${rec.form.paceDelta.toFixed(2)}s a lap off your career pace.`)
-        : `${rec.totals.sessionsWithLaps} sessions so far.`),
-      progressionChart(rec.progression)) : null,
-
-    name && rec.totals.sessions ? h('div.card',
-      h('div.row', { style: { justifyContent: 'space-between' } },
-        h('h3', 'Over time'),
-        h('div.seg', ...PERIODS.map(([k, label]) => h('button', {
-          'aria-pressed': period === k, onclick: () => { period = store.save('statsPeriod', k); draw(); },
-        }, label)))),
-      periodTable(rec.periods[period])) : null,
-
-    name && rec.totals.stoppages ? h('div.note',
-      h('strong', `${plural(rec.totals.stoppages, 'lap')} left out of your pace`),
-      `Battery changes, crashes and double triggers are counted as laps flown ` +
-      `(${rec.totals.lapsRecorded}) but not as lap times (${rec.totals.lapsClean}). ` +
-      `Without that, one battery change makes your average lap look like several minutes.`) : null,
-
-    h('div.card',
-      h('h3', 'Publishing'),
-      h('p.muted', p.consent === pilot.CONSENT.public
-        ? `Publishing as ${p.name}.` + (publish.queueSize()
-            ? ` ${plural(publish.queueSize(), 'session')} waiting for signal.` : '')
-        : 'Everything above is on this device only. Nothing has been uploaded.'),
-      publish.pilotUrl(p.id)
-        ? h('p', h('a', { href: publish.pilotUrl(p.id) }, publish.pilotUrl(p.id))) : null,
-      /* Straight to the question when there is a question to ask. Routing a
-       * first-time yes through a settings sheet that then offers the same
-       * button again is a step that exists only because the code was
-       * organised that way. */
-      h('button.ghost', {
-        onclick: () => (p.consent === pilot.CONSENT.public ? publishingSheet(app) : askToPublish(app)),
-      }, p.consent === pilot.CONSENT.public ? 'Publishing settings' : 'Publish my times')));
-
-  draw();
   mount(node, h('div.scroller', h('div.wrap.stack',
     h('div.row', { style: { justifyContent: 'space-between' } },
       h('h2', 'Stats'),
       h('button.ghost', { onclick: () => app.go(app.mode === 'solo' ? 'fly' : 'race') },
         'Back to the session')),
-    body)));
+
+    rec
+      ? dashboard(rec, { own: true, heading })
+      : h('div.card', h('p.muted',
+          'No sessions saved on this device yet. Fly one and it lands here.')),
+
+    publishing)));
   return { node };
 };
 

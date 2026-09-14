@@ -8,6 +8,7 @@
 'use strict';
 import * as laprf from './laprf.js';
 import * as store from './store.js';
+import * as track from './track.js';
 import * as tuning from './tuning.js';
 import { fmtDuration } from './race.js';
 import { ChannelScanner } from './tuning.js';
@@ -37,6 +38,16 @@ SCREENS.topbar = app => {
   ];
   if (app.timer.battery) {
     bits.push(h('span.pill', { title: 'Timer battery' }, app.timer.battery.toFixed(2) + 'V'));
+  }
+  /* Where tonight's laps are being filed. Shown only once there is one, so it
+   * is never a chip that says nothing, and tappable because the commonest
+   * reason to look at it is that it is wrong. */
+  const here = track.currentName();
+  if (here) {
+    bits.push(h('button.pill.trackpill', {
+      title: `Flying at ${here} — tap to change`, 'aria-label': `Track: ${here}`,
+      onclick: () => trackSheet(app),
+    }, icon('pin', 14), h('span', here)));
   }
   bits.push(h('div.spacer'));
   if (app.connected) {
@@ -94,6 +105,8 @@ function menuSheet(app) {
   sheet('WhoopTimer', close => h('div.stack.tight',
     item('target', 'Gate & signal', 'What counts as a lap',
          () => { close(); app.go('gate'); }),
+    item('pin', 'Track', track.currentName() || 'Not set — your stats can be filtered by it',
+         () => { close(); trackSheet(app); }),
     item('list', 'History', 'Saved sessions and export', () => { close(); app.go('history'); }),
     item('trophy', 'Stats', 'Your record over days, weeks and months',
          () => { close(); app.go('stats'); }),
@@ -110,6 +123,76 @@ function menuSheet(app) {
     item('gear', 'Keyboard shortcuts', 'Manual laps and undo',
          () => { close(); shortcutsSheet(); }),
   ));
+}
+
+/**
+ * What track are you flying tonight?
+ *
+ * One free-text field. There is no list of tracks to choose from because there
+ * is no authority on what a club calls its own field, and the tracks somebody
+ * has already flown are offered as buttons so the second night is one tap and
+ * cannot be a typo -- which is also what stops the stats filter filling up with
+ * three spellings of the same place.
+ *
+ * Skipping is a real answer. The session is saved either way; it just has no
+ * track on it, and those sessions stay reachable in the filter as their own
+ * group rather than disappearing.
+ */
+export function trackSheet(app, { onDone } = {}) {
+  const cur = track.get();
+  let name = cur.name || '';
+  const err = h('p.muted', { style: { color: 'var(--state-red)' }, hidden: true });
+  const input = h('input', {
+    value: name, maxlength: track.MAX, placeholder: 'Bunbury hall, the back paddock…',
+    'aria-label': 'Track name', id: 'trackname', autocomplete: 'off',
+    oninput: e => { name = e.target.value; err.hidden = true; },
+  });
+
+  const save = close => {
+    const problem = track.trackProblem(name);
+    if (problem) { err.textContent = problem; err.hidden = false; return; }
+    const r = track.set(name);
+    close();
+    toast(r.tagged
+      ? `Flying at ${r.name}. ${plural(r.tagged, 'session')} from tonight tagged too.`
+      : `Flying at ${r.name}.`, 'ok');
+    onDone?.(r.name);
+    app?.render?.();
+  };
+
+  sheet('What track are you flying tonight?', close => h('div.stack',
+    h('p.muted', 'Sessions are stamped with it as they are saved, so your stats can be ' +
+                 'read one track at a time. A best lap on a 12-second indoor course and ' +
+                 'one on a 30-second field are not the same number.'),
+
+    h('div.field',
+      h('label', { for: 'trackname' }, 'Track'),
+      input,
+      h('span.hint', 'Anything you call it. It stays until you change it.')),
+    err,
+
+    track.known().length ? h('div',
+      h('div.cap', { style: { marginBottom: 'var(--s2)' } }, 'Flown before'),
+      h('div.row', { style: { gap: 'var(--s2)' } },
+        ...track.known().slice(0, 8).map(t => h('button.pill', {
+          onclick: () => { name = t.name; input.value = t.name; err.hidden = true; },
+        }, t.name)))) : null,
+
+    h('div.row', { style: { gap: '8px' } },
+      h('button.ghost', { style: { flex: '1' },
+        onclick: () => { track.markAsked(); close(); onDone?.(null); app?.render?.(); } },
+        cur.name ? 'Leave it' : 'Skip tonight'),
+      h('button.go', { style: { flex: '1' }, onclick: () => save(close) }, 'Save')),
+
+    cur.name ? h('button.quiet.wide', {
+      onclick: () => {
+        track.clear();
+        close();
+        toast('No track recorded from now on. Nothing already saved changed.');
+        onDone?.(null);
+        app?.render?.();
+      },
+    }, 'Stop recording a track') : null));
 }
 
 function shortcutsSheet() {
@@ -232,6 +315,8 @@ SCREENS.connect = app => {
     h('div.linkrow',
       h('button', { onclick: () => app.connect('demo') }, 'Try it without a timer'),
       h('button', { onclick: () => helpSheet(app) }, 'My timer isn’t showing up'),
+      h('button', { onclick: () => trackSheet(app) },
+        track.currentName() ? `Track: ${track.currentName()}` : 'Set tonight’s track'),
       store.load('history', []).length
         ? h('button', { onclick: () => app.go('stats') }, 'My stats') : null,
       !canConnect && h('a', { href: 'https://github.com/Mathew-Harvey/WhoopRaceTimer#running-it-locally',
@@ -1622,7 +1707,7 @@ SCREENS.history = app => {
     return h('div.histrow',
       h('div.row', { style: { justifyContent: 'space-between' } },
         h('strong', `${r.name} · ${describeFormat(r)}`),
-        h('span.cap', new Date(r.at * 1000).toLocaleString())),
+        h('span.cap', (r.track ? `${r.track} · ` : '') + new Date(r.at * 1000).toLocaleString())),
       ...r.results.map(e => h('div',
         h('div.row', { style: { gap: '8px' } },
           h('span.pill', h('span.swatch', { style: { width: '10px', height: '10px',

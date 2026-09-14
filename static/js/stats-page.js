@@ -39,12 +39,12 @@ function header(title, sub) {
  * same code from the same aggregation — see dashboard.js. Only the sentence
  * under the name differs, because only that depends on whose page this is.
  */
-function pilotView(name, rec, { since, local } = {}) {
+function pilotView(name, rec, { since, local, onTrack } = {}) {
   return h('div.stack',
     header(name, local
       ? 'From this browser only — nothing here has been published.'
       : `Publishing since ${when(since)}`),
-    ...dashboard(rec, { own: false }));
+    ...dashboard(rec, { own: false, onTrack }));
 }
 
 function leaderboardView(pilots) {
@@ -62,6 +62,20 @@ function leaderboardView(pilots) {
         h('td.num', String(p.totals?.sessions ?? 0)),
         h('td.num', when(p.totals?.lastAt))))))))
       : h('div.card', h('p.muted', 'Nobody has published yet.')));
+}
+
+/* The chosen track lives in the URL, so a filtered page is a link somebody can
+ * send: "here is my record at Bunbury" is a more useful thing to share than a
+ * page the reader has to re-filter. An absent parameter is every track; an
+ * empty one is the sessions with no track on them. */
+function trackParam() {
+  return params.has('track') ? params.get('track') : null;
+}
+
+function setTrackParam(value) {
+  if (value == null) params.delete('track'); else params.set('track', value);
+  const q = params.toString();
+  history.replaceState(null, '', q ? `?${q}` : location.pathname);
 }
 
 function problem(title, body) {
@@ -91,32 +105,52 @@ async function main() {
         'browser to fall back on, so there is nothing to show at all yet.'));
       return;
     }
-    mount(page, h('div.stack',
+    /* No service, so the filter costs nothing but a re-aggregation of what is
+     * already in memory. */
+    const drawLocal = which => mount(page, h('div.stack',
       h('div.note', { 'data-tone': 'warn' },
         h('strong', 'This is not a public page.'),
         'No stats service is configured for this site, so this is your own saved ' +
         'history, read from this browser. Nobody else can see it.'),
-      pilotView(name, aggregate(history, { pilotName: name }), { local: true })));
+      pilotView(name, aggregate(history, { pilotName: name, track: which }),
+                { local: true, onTrack: next => { setTrackParam(next); drawLocal(next); } })));
+    drawLocal(trackParam());
     return;
   }
 
   try {
     if (id) {
-      const data = await publish.fetchPilot(id);
-      mount(page, pilotView(data.pilot.name, data.record, { since: data.pilot.since }));
-      document.title = `${data.pilot.name} — WhoopTimer stats`;
+      /* The filter goes back to the service rather than being applied here: the
+       * page is handed one aggregated record, not the raw sessions, so the only
+       * honest way to narrow it is to ask for the narrowed one. The query is
+       * part of the cache key, so a track somebody else looked at in the last
+       * minute costs nothing. */
+      const draw = async which => {
+        const data = await publish.fetchPilot(id, which);
+        mount(page, pilotView(data.pilot.name, data.record,
+                              { since: data.pilot.since, onTrack: next => {
+                                setTrackParam(next);
+                                draw(next).catch(showError);
+                              } }));
+        document.title = `${data.pilot.name} — WhoopTimer stats`;
+      };
+      await draw(trackParam());
     } else {
       const data = await publish.fetchLeaderboard();
       mount(page, leaderboardView(data.pilots || []));
     }
   } catch (err) {
-    mount(page, problem(
-      err.status === 404 ? 'No such pilot.' : 'Could not reach the stats service.',
-      err.status === 404
-        ? 'The link may be wrong, or the pilot deleted their data — which they are ' +
-          'entitled to do at any time.'
-        : 'It may be offline, or you may be. The timer itself does not need it.'));
+    showError(err);
   }
+}
+
+function showError(err) {
+  mount(page, problem(
+    err.status === 404 ? 'No such pilot.' : 'Could not reach the stats service.',
+    err.status === 404
+      ? 'The link may be wrong, or the pilot deleted their data — which they are ' +
+        'entitled to do at any time.'
+      : 'It may be offline, or you may be. The timer itself does not need it.'));
 }
 
 main();

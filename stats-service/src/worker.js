@@ -28,6 +28,7 @@ const SECRET_RE = /^[0-9a-f]{32,128}$/i;
 const LIMITS = {
   body: 256 * 1024,
   name: 32,
+  track: 40,
   runId: 64,
   laps: 500,
   lapSeconds: 3600,
@@ -79,6 +80,20 @@ function cleanName(raw) {
     .trim();
 }
 
+/** A track name lands on the same public page as a display name and gets the
+ *  same treatment. Empty means the session was flown before anybody named a
+ *  track, which is a real answer and is stored as NULL. */
+function cleanTrack(raw) {
+  if (raw == null) return null;
+  const t = String(raw)
+    .replace(/\s+/g, ' ')
+    .replace(/[\u0000-\u001f\u007f<>]/g, '')
+    .trim()
+    .slice(0, LIMITS.track)
+    .trim();
+  return t || null;
+}
+
 /* ------------------------------------------------------------ validation -- */
 
 function badSession(s) {
@@ -88,6 +103,7 @@ function badSession(s) {
   /* A session claiming to be from next year is a clock problem on the device,
    * and accepting it puts a pilot at the top of a month they have not flown. */
   if (s.at > now() + 86400) return 'timestamp is in the future';
+  if (s.track != null && typeof s.track !== 'string') return 'bad track';
   const e = s.entry;
   if (!e || typeof e !== 'object') return 'no entry';
   if (!Array.isArray(e.lapTimes)) return 'no lap times';
@@ -104,6 +120,7 @@ function toRecord(row) {
     runId: row.run_id,
     at: row.at,
     mode: row.mode,
+    track: row.track || null,
     consecN: row.consec_n || 3,
     minLap: row.min_lap,
     holeshot: !!row.holeshot,
@@ -184,15 +201,17 @@ async function postSession(env, body) {
    * was finished again is one session, and the app re-sends it under the same
    * runId precisely so the second version wins. */
   await env.DB.prepare(
-    `INSERT INTO sessions (pilot_id, run_id, at, mode, consec_n, min_lap, holeshot,
+    `INSERT INTO sessions (pilot_id, run_id, at, mode, track, consec_n, min_lap, holeshot,
                            duration, channel, pos, lap_times, created_at)
-     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
      ON CONFLICT(pilot_id, run_id) DO UPDATE SET
-       at=excluded.at, mode=excluded.mode, consec_n=excluded.consec_n,
+       at=excluded.at, mode=excluded.mode, track=excluded.track,
+       consec_n=excluded.consec_n,
        min_lap=excluded.min_lap, holeshot=excluded.holeshot,
        duration=excluded.duration, channel=excluded.channel, pos=excluded.pos,
        lap_times=excluded.lap_times`)
     .bind(pilotId, session.runId, Math.floor(session.at), session.mode || null,
+          cleanTrack(session.track),
           session.consecN || 3, session.minLap ?? null, session.holeshot ? 1 : 0,
           session.duration ?? null, e.channel || null, e.pos ?? null,
           JSON.stringify(e.lapTimes), now())
@@ -202,12 +221,23 @@ async function postSession(env, body) {
   return json({ ok: true, pilotId, best: rec.best.lap, sessions: rec.totals.sessions }, 200, env);
 }
 
-async function getPilot(env, pilotId) {
+/**
+ * One pilot's record, optionally narrowed to one track.
+ *
+ * `track` is the query parameter as it arrived: absent (null) is every track,
+ * present and empty is the sessions flown before anybody named one, and
+ * anything else is that track. The narrowing is aggregate()'s, not a second
+ * implementation here, for the same reason the aggregation itself is shared --
+ * a public page that disagrees with the pilot's own phone about which laps
+ * count is the failure this arrangement exists to prevent.
+ */
+async function getPilot(env, pilotId, track = null) {
   if (!UUID_RE.test(String(pilotId || ''))) return fail(env, 400, 'bad pilot id');
+  if (track != null && track.length > LIMITS.track) return fail(env, 400, 'bad track');
   const row = await env.DB.prepare('SELECT * FROM pilots WHERE id = ?1').bind(pilotId).first();
   if (!row) return fail(env, 404, 'no such pilot');
 
-  const record = aggregate(await sessionsFor(env, pilotId), { match: () => true });
+  const record = aggregate(await sessionsFor(env, pilotId), { match: () => true, track });
   record.pilotName = row.name;
   return json({
     pilot: { id: row.id, name: row.name, since: row.created_at },
@@ -266,7 +296,10 @@ export async function handle(request, env) {
     }
     if (path === '/v1/pilots') return getLeaderboard(env);
     const m = path.match(/^\/v1\/pilots\/([^/]+)$/);
-    if (m) return getPilot(env, decodeURIComponent(m[1]));
+    if (m) {
+      return getPilot(env, decodeURIComponent(m[1]),
+                      url.searchParams.has('track') ? url.searchParams.get('track') : null);
+    }
     return fail(env, 404, 'no such endpoint');
   }
 

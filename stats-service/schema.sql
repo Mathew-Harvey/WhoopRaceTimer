@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   run_id     TEXT NOT NULL,          -- the app's own id for one race
   at         INTEGER NOT NULL,       -- epoch seconds, when it was flown
   mode       TEXT,
+  -- Where it was flown, as the pilot typed it. NULL is a real answer: the
+  -- session was flown before anybody named a track, and the stats keep those
+  -- together as their own group rather than hiding them.
+  track      TEXT,
   consec_n   INTEGER,
   min_lap    REAL,
   holeshot   INTEGER,

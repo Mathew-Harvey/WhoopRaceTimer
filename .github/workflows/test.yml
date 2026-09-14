@@ -23,6 +23,8 @@ jobs:
       # public page counts, and every way of getting it wrong looks plausible
       # on screen rather than like a bug.
       - run: node tests/test_aggregate.mjs
+      # Naming the track, and what naming it does to sessions already saved.
+      - run: node tests/test_track.mjs
       # The stats service, against a D1 in an array.
       - run: node stats-service/test/test_worker.mjs
       # The LapRF wire format, pinned so a second timer cannot quietly change it.

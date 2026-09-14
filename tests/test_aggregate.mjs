@@ -11,7 +11,7 @@
 import {
   aggregate, bestConsecutive, cleanLaps, dayKey, fmtDuration, fmtLap,
   leaderboard, mad, mean, median, monthKey, quantile, REASONS, rollup, sessionStats,
-  stdev, weekKey, fmtSpread, MIN_LAPS_FOR_MAD, STOPPAGE_FACTOR,
+  stdev, weekKey, fmtSpread, trackKey, MIN_LAPS_FOR_MAD, STOPPAGE_FACTOR,
 } from '../static/js/aggregate.js';
 
 let failures = 0;
@@ -335,6 +335,73 @@ const reasons = r => r.laps.map(l => l.reason);
   eq('  and copes with nothing to print', fmtSpread(null), '—');
 }
 
+
+/* ==================================================================== */
+/* Tracks                                                                */
+/*                                                                       */
+/* A best lap on a 12-second indoor course and one on a 30-second field   */
+/* are not the same number, so the record can be read one track at a time.*/
+/* ==================================================================== */
+{
+  const mkt = (runId, at, track, times) => ({
+    runId, at, mode: 'practice', consecN: 3, minLap: 1, track,
+    results: [{ pos: 1, name: 'Kez', channel: 'R1', lapTimes: times }],
+  });
+  const history = [
+    mkt('a', 1000, null, [26, 26.2, 26.1]),
+    mkt('b', 2000, 'Bunbury', [22, 22.1, 21.9]),
+    mkt('c', 3000, ' bunbury  ', [22.5, 22.4]),
+    mkt('d', 4000, 'Perth Hall', [30, 30.2]),
+  ];
+
+  eq('spelling does not make a second track', trackKey(' BUNBURY '), trackKey('bunbury'));
+  eq('  and no track at all has its own key', trackKey(null), '');
+
+  const all = aggregate(history, { pilotName: 'Kez' });
+  eq('unfiltered counts every session', all.totals.sessions, 4);
+  eq('  and names no track', all.track, null);
+  eq('  while listing the ones flown', all.tracks.length, 3);
+  eq('  most recent first', all.tracks[0].name, 'Perth Hall');
+  eq('  folding two spellings together',
+     all.tracks.find(t => t.key === 'bunbury').sessions, 2);
+  eq('  and labelling them as last typed',
+     all.tracks.find(t => t.key === 'bunbury').name, 'bunbury');
+  eq('  with the untracked sessions as a group of their own',
+     all.tracks.find(t => t.key === '').sessions, 1);
+  eq('    which has no name to show', all.tracks.find(t => t.key === '').name, null);
+
+  const b = aggregate(history, { pilotName: 'Kez', track: 'BUNBURY' });
+  eq('a filter narrows the sessions', b.totals.sessions, 2);
+  eq('  and the best lap with them', b.best.lap, 21.9);
+  eq('  echoing back what it was asked for', b.track, 'BUNBURY');
+
+  /* The control is built from rec.tracks. If filtering pruned that list,
+   * choosing a track would remove every other option and there would be no way
+   * back, so it is computed over everything the pilot has flown. */
+  eq('a filtered record still offers every track', b.tracks.length, 3);
+  eq('  with their real session counts',
+     b.tracks.find(t => t.key === 'perth hall').sessions, 1);
+
+  const none = aggregate(history, { pilotName: 'Kez', track: '' });
+  eq('an empty filter is the sessions flown before anybody named a track',
+     none.totals.sessions, 1);
+  eq('  which is a real answer', none.best.lap, 26);
+
+  eq('a track nobody flew is empty, not everything',
+     aggregate(history, { pilotName: 'Kez', track: 'Nowhere' }).totals.sessions, 0);
+
+  eq('the track rides along on each session', all.sessions[1].track, 'Bunbury');
+
+  /* Somebody else at the same track must not be counted in. */
+  const shared = [{
+    runId: 'e', at: 5000, mode: 'practice', consecN: 3, minLap: 1, track: 'Bunbury',
+    results: [{ pos: 1, name: 'Jo', channel: 'R1', lapTimes: [19, 19.1, 19.2] }],
+  }];
+  eq('the pilot filter still applies inside a track',
+     aggregate([...history, ...shared], { pilotName: 'Kez', track: 'Bunbury' }).best.lap, 21.9);
+  eq('  and another pilot does not appear in the track list',
+     aggregate(shared, { pilotName: 'Kez' }).tracks.length, 0);
+}
 
 /* ==================================================================== */
 /* Dashboard series                                                      */

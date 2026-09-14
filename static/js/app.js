@@ -11,6 +11,7 @@
 'use strict';
 import * as laprf from './laprf.js';
 import * as store from './store.js';
+import * as track from './track.js';
 import * as tuning from './tuning.js';
 import { Race } from './race.js';
 import { BleLink, SerialLink, BridgeLink, DemoLink, capabilities, probeBridge } from './link.js';
@@ -20,7 +21,7 @@ import { CalibrationCoach } from './calibrate.js';
 import { toast, mount, closeSheet, sheetOpen, confirmSheet } from './ui.js';
 import * as publish from './publish.js';
 import * as statsUi from './stats.js';
-import { SCREENS } from './screens.js';
+import { SCREENS, trackSheet } from './screens.js';
 
 export const SLOTS = [1, 2, 3, 4];
 
@@ -384,6 +385,27 @@ class App {
     if (!this.mode) this.screen = 'choose';
     else this.screen = this.mode === 'solo' ? 'fly' : 'race';
     this.render();
+    this.askTrack();
+  }
+
+  /**
+   * "What track are you flying tonight?", once a night, when the timer comes up.
+   *
+   * Connecting a timer is the moment somebody has arrived somewhere, which is
+   * the only moment the question is not an interruption. Not at the start of a
+   * race -- a dialog between a pilot and the word GO is exactly in the way --
+   * and not after one, when the answer would be a correction rather than a
+   * choice.
+   *
+   * Asked at most once per flying night, whether it is answered or waved away,
+   * and never over a race that was restored with the page.
+   */
+  askTrack() {
+    if (this.race.active || track.settledTonight()) return;
+    setTimeout(() => {
+      if (this.race.active || track.settledTonight() || sheetOpen()) return;
+      trackSheet(this);
+    }, 700);
   }
 
   /** Problems worth putting in front of someone: found, and not already waved
@@ -1163,6 +1185,10 @@ class App {
   finishRace(results) {
     const anyLaps = results.results.some(r => r.laps > 0);
     if (anyLaps) {
+      /* Stamped here rather than in the race engine: where you are is not
+       * something the timing knows about, and a session saved before anybody
+       * named a track is saved without one rather than with a guess. */
+      track.stamp(results);
       store.appendHistory(results);
       statsUi.onSessionSaved(this, results);
     }

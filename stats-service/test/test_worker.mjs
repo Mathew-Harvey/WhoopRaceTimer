@@ -12,6 +12,7 @@
  */
 import { handle } from '../src/worker.js';
 import { cleanName as clientCleanName } from '../../static/js/pilot.js';
+import { cleanTrack as clientCleanTrack } from '../../static/js/track.js';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -68,10 +69,14 @@ function fakeDb() {
             return { success: true };
           }
           if (has(sql, 'INSERT INTO sessions')) {
+            /* Positional, like the real thing. It is spelled out here rather
+             * than parsed so that adding a column to the INSERT and forgetting
+             * this list fails loudly on the next run instead of shifting every
+             * value one place to the left and storing a lap time as a date. */
             const row = { pilot_id: args[0], run_id: args[1], at: args[2], mode: args[3],
-                          consec_n: args[4], min_lap: args[5], holeshot: args[6],
-                          duration: args[7], channel: args[8], pos: args[9],
-                          lap_times: args[10], created_at: args[11] };
+                          track: args[4], consec_n: args[5], min_lap: args[6],
+                          holeshot: args[7], duration: args[8], channel: args[9],
+                          pos: args[10], lap_times: args[11], created_at: args[12] };
             const i = sessions.findIndex(s => s.pilot_id === row.pilot_id && s.run_id === row.run_id);
             if (i >= 0) sessions[i] = row; else sessions.push(row);
             return { success: true };
@@ -270,6 +275,68 @@ const laps = [24.0, 23.8, 24.1, 23.9, 24.2, 400.0];
   eq('  fastest first', table.pilots[0].pilotName, 'Kez');
   eq('  ranked from one', table.pilots[0].rank, 1);
   check('  and carries no secrets either', !JSON.stringify(table).includes('secret'));
+}
+
+/* ----------------------------------------------------------------- tracks -- */
+
+/* A track is free text from the internet that ends up on a public page beside
+ * a name, so it gets the same treatment as the name, and it has to mean the
+ * same thing here as it did in the browser -- a pilot filtering their own page
+ * to "Bunbury" and getting nothing because the server stored something else is
+ * the failure worth spending a test on. */
+{
+  const e = env();
+  const at = 1757700000;
+  const withTrack = (runId, when, track, lapTimes) => ({ ...session(runId, when, lapTimes), track });
+
+  await post(e, '/v1/sessions', { pilotId: UUID, pilotName: 'Kez', secret: SECRET,
+                                  session: withTrack('t1', at, 'Bunbury', [24, 23.8, 24.1]) });
+  await post(e, '/v1/sessions', { pilotId: UUID, pilotName: 'Kez', secret: SECRET,
+                                  session: withTrack('t2', at + 86400, ' bunbury  ', [23.5, 23.6]) });
+  await post(e, '/v1/sessions', { pilotId: UUID, pilotName: 'Kez', secret: SECRET,
+                                  session: withTrack('t3', at + 172800, 'Perth Hall', [30, 30.2]) });
+  await post(e, '/v1/sessions', { pilotId: UUID, pilotName: 'Kez', secret: SECRET,
+                                  session: session('t4', at + 259200, [26, 26.2]) });
+
+  const all = await (await get(e, '/v1/pilots/' + UUID)).json();
+  eq('every track is counted', all.record.totals.sessions, 4);
+  eq('  and listed, most recent first', all.record.tracks[0].name, null);
+  eq('  with two spellings folded into one track',
+     all.record.tracks.filter(t => t.key === 'bunbury').length, 1);
+  eq('  that knows how many sessions it holds',
+     all.record.tracks.find(t => t.key === 'bunbury').sessions, 2);
+  eq('  and an unfiltered record names no track', all.record.track, null);
+
+  const b = await (await get(e, '/v1/pilots/' + UUID + '?track=BUNBURY')).json();
+  eq('a track filter narrows the record', b.record.totals.sessions, 2);
+  eq('  case and spacing do not matter', b.record.best.lap, 23.5);
+  eq('  and Perth Hall is not in it', b.record.totals.lapsClean, 5);
+  eq('  the record says which track it is', b.record.track, 'BUNBURY');
+  eq('  and still offers every other track to switch to', b.record.tracks.length, 3);
+
+  const none = await (await get(e, '/v1/pilots/' + UUID + '?track=')).json();
+  eq('an empty filter is the sessions with no track', none.record.totals.sessions, 1);
+  eq('  which is a real group, not an error', none.record.best.lap, 26);
+
+  const nowhere = await (await get(e, '/v1/pilots/' + UUID + '?track=Nowhere')).json();
+  eq('a track nobody flew is empty rather than everything',
+     nowhere.record.totals.sessions, 0);
+
+  /* The boundary. */
+  await post(e, '/v1/sessions', { pilotId: UUID, pilotName: 'Kez', secret: SECRET,
+                                  session: withTrack('t5', at + 345600, '  <b>Shed</b>  ', [22]) });
+  const cleaned = await (await get(e, '/v1/pilots/' + UUID)).json();
+  const shed = cleaned.record.tracks.find(t => t.name && t.name.includes('Shed'));
+  eq('angle brackets do not survive the server', shed.name, 'bShed/b');
+  eq('  and the browser would have sent exactly that',
+     clientCleanTrack('  <b>Shed</b>  '), 'bShed/b');
+
+  const long = 'x'.repeat(60);
+  eq('a long track is capped the same on both sides',
+     clientCleanTrack(long).length, 40);
+  const r = await post(e, '/v1/sessions', { pilotId: UUID, pilotName: 'Kez', secret: SECRET,
+                                            session: { ...session('t6', at + 432000, [21]), track: 42 } });
+  eq('a track that is not a string is refused', r.status, 400);
 }
 
 /* ------------------------------------------------------------------ CORS -- */

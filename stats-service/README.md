@@ -58,6 +58,20 @@ constant is empty and publishing is off for everybody — which is the correct
 default, because publishing to a service that does not exist should not be
 offered.
 
+### Upgrading a database that already exists
+
+`schema.sql` only creates tables that are not there, so it will not add a
+column to a table you already have. Deployments made before tracks existed need
+the one migration:
+
+```bash
+npx wrangler d1 execute whooptimer-stats --file=./migrations/001-add-track.sql --remote
+```
+
+Existing sessions get a NULL track, which is the truthful answer — nobody said
+where they were flown — and they stay visible on a pilot's page under "No track
+recorded".
+
 ### Testing against a local worker first
 
 ```bash
@@ -80,6 +94,7 @@ safe to leave the shipped constant empty.
 |---|---|
 | `GET /v1/pilots` | The leaderboard. Public. |
 | `GET /v1/pilots/:id` | One pilot's full record. Public. |
+| `GET /v1/pilots/:id?track=X` | The same, narrowed to one track. `?track=` on its own gives the sessions flown before a track was named. |
 | `POST /v1/sessions` | Publish one session. Needs the secret. |
 | `POST /v1/pilots/rename` | Change the display name. Needs the secret. |
 | `POST /v1/pilots/delete` | Remove the pilot and every lap. Needs the secret. |

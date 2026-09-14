@@ -61,6 +61,7 @@ export const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + '
 /* ------------------------------------------------------------------- icons -- */
 const ICONS = {
   bolt: 'M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z',
+  pin: 'M12 21s7-6.4 7-11a7 7 0 1 0-14 0c0 4.6 7 11 7 11Zm0-8.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z',
   trophy: 'M7 4h10v5a5 5 0 0 1-10 0V4Zm0 2H4v1a3 3 0 0 0 3 3m10-4h3v1a3 3 0 0 1-3 3M9 19h6m-3-5v5',
   bluetooth: 'm12 2 5 4-5 4V2Zm0 12 5 4-5 4v-8ZM7 8l10 8M17 8 7 16',
   usb: 'M12 21V6m0 0-3 3m3-3 3 3M8 13l-3 2v3m11-8 3 2v3M5 20a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm14 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM12 4.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z',
@@ -133,7 +134,7 @@ export function sheet(title, build, { onClose } = {}) {
   const esc = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
   mount(panel,
     h('div.grip'),
-    h('div.row', { style: { justifyContent: 'space-between', marginBottom: '12px' } },
+    h('div.row.sheethead',
       h('h2', title),
       h('button.quiet', { onclick: close, 'aria-label': 'Close' }, icon('close', 20))),
     build(close));

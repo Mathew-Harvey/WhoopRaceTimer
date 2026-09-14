@@ -154,6 +154,21 @@ export function hasPublished(runId) {
 }
 
 /**
+ * Forget that a session was published, so it goes up again.
+ *
+ * Not an undo: the service still has it. This is for when the session itself
+ * changed after it was sent -- naming the track of a night already half
+ * uploaded is the case that needs it -- and the service replaces a session it
+ * already holds by runId, so the second send is an update.
+ */
+export function unmarkPublished(runId) {
+  if (!runId) return;
+  const p = get();
+  if (!p.published.includes(runId)) return;
+  save({ published: p.published.filter(id => id !== runId) });
+}
+
+/**
  * Which entry in a session is this pilot.
  *
  * A saved session holds every pilot who raced, and publishing all of them

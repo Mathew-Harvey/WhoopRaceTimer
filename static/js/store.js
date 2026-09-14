@@ -71,12 +71,12 @@ export function appendHistory(entry, cap = 200) {
 
 /** CSV of every saved session, the same shape the Python build exported. */
 export function historyCsv() {
-  const rows = [['session', 'when', 'mode', 'pos', 'pilot', 'channel',
+  const rows = [['session', 'when', 'track', 'mode', 'pos', 'pilot', 'channel',
                  'laps', 'best', 'best_consec', 'total', 'lap_times']];
   for (const r of load('history', [])) {
     const when = new Date((r.at || 0) * 1000).toISOString().slice(0, 16).replace('T', ' ');
     for (const e of r.results || []) {
-      rows.push([r.name, when, r.mode, e.pos, e.name, e.channel, e.laps,
+      rows.push([r.name, when, r.track || '', r.mode, e.pos, e.name, e.channel, e.laps,
                  e.best ?? '', e.consec ?? '', e.total ?? '',
                  (e.lapTimes || []).map(x => x.toFixed(2)).join(' ')]);
     }

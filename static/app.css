@@ -547,6 +547,11 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
 @keyframes sheetin{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
 .sheet .grip{width:40px;height:4px;border-radius:99px;background:var(--line);margin:0 auto var(--s3)}
 .sheet h2{margin-bottom:var(--s3)}
+/* .row wraps, so a title long enough to take the full width pushed the close
+   button onto a line of its own. The close button never wraps. */
+.sheet .sheethead{flex-wrap:nowrap;align-items:flex-start;gap:var(--s3);margin-bottom:12px}
+.sheet .sheethead h2{margin-bottom:0;min-width:0}
+.sheet .sheethead button{flex:none;margin:-4px -6px auto auto}
 @media (min-width:700px){
   .sheet{align-items:center}
   .sheet .panel{border-radius:var(--r4);border-bottom:1px solid var(--line);
@@ -633,6 +638,13 @@ main{flex:1;display:flex;flex-direction:column;min-height:0}
   --cal-1:#a387d5; --cal-2:#804ec5; --cal-3:#592097; --cal-4:#2e0d52;
   --c-hist:#804ec5;
 }
+
+/* The track chip in the top bar. It can be any string the pilot typed, so it
+   truncates rather than pushing the connection pill off a phone. */
+.trackpill{max-width:min(38vw,220px)}
+.trackpill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trackfilter{margin-bottom:var(--s3)}
+.trackfilter .cap{color:var(--fg-3)}
 
 .statgrid{display:grid;gap:var(--s4);grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}
 .statgrid.tight{gap:var(--s3);margin-bottom:var(--s3)}

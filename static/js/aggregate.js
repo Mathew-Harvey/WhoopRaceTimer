@@ -69,6 +69,25 @@ export const REASONS = {
   outLap: 'out-lap',      /* first lap from a standing start, so not a lap time */
 };
 
+/* ----------------------------------------------------------------- tracks -- */
+
+/**
+ * Two spellings of the same track are the same track.
+ *
+ * A track name is typed by hand, on a phone, at a track, once a night, and
+ * "Bunbury", "bunbury" and "Bunbury " are one place. Comparison is done on this
+ * key; what is shown is whatever the pilot last typed.
+ *
+ * It lives here, with no dependencies, because the worker imports this file and
+ * has to group a pilot's sessions exactly the way their phone does.
+ */
+export function trackKey(name) {
+  return String(name == null ? '' : name).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** The empty key: sessions flown before anybody named the track. */
+export const UNTRACKED = '';
+
 /* ------------------------------------------------------------ statistics -- */
 
 export function median(xs) {
@@ -205,6 +224,7 @@ export function sessionStats(entry, session = {}) {
     at: session.at || null,
     sessionName: session.name || null,
     mode: session.mode || null,
+    track: session.track || null,
     channel: entry.channel || null,
     pos: entry.pos || null,
     /* Every lap the gate recorded, stoppages included: this is distance
@@ -318,18 +338,41 @@ function bucketBy(statsList, keyFn) {
  * Everything a stats page shows for one pilot.
  *
  * @param {Array} sessions history records — the shape race.results() produces
- * @param {object} opts { pilotName, match } — `match` picks this pilot's entry
- *                 out of a multi-pilot session; it defaults to matching on the
- *                 pilot name recorded in the session.
+ * @param {object} opts { pilotName, match, track } — `match` picks this pilot's
+ *                 entry out of a multi-pilot session; it defaults to matching on
+ *                 the pilot name recorded in the session. `track` narrows the
+ *                 record to one place: leave it out (or null) for every track,
+ *                 pass a name for that track, or pass '' for the sessions flown
+ *                 before anybody named one.
  */
 export function aggregate(sessions, opts = {}) {
   const name = opts.pilotName;
   const match = opts.match || (entry => !name || entry.name === name);
+  const wantTrack = opts.track == null ? null : trackKey(opts.track);
 
   const perSession = [];
+  /* Which tracks this pilot has flown, counted over everything they have flown
+   * and NOT over the filtered subset. A control built from the filtered record
+   * would be a one-way door: choose Bunbury and Bunbury is the only option
+   * left, with no way back to the other tracks or to all of them. */
+  const seen = new Map();
+
   for (const s of sessions || []) {
     for (const entry of s.results || []) {
       if (!match(entry, s)) continue;
+
+      const key = trackKey(s.track);
+      const t = seen.get(key) || { key, name: null, sessions: 0, lastAt: null };
+      t.sessions++;
+      if (key && (t.lastAt == null || (s.at || 0) >= t.lastAt)) {
+        /* The most recent spelling wins, so fixing a typo tonight fixes the
+         * label everywhere rather than leaving both on the page. */
+        t.name = String(s.track).replace(/\s+/g, ' ').trim();
+      }
+      if (s.at && (t.lastAt == null || s.at > t.lastAt)) t.lastAt = s.at;
+      seen.set(key, t);
+
+      if (wantTrack != null && key !== wantTrack) continue;
       const st = sessionStats(entry, s);
       /* A session where nothing survived cleaning is a session that happened —
        * it counts as an outing — but it cannot contribute to pace. */
@@ -355,6 +398,10 @@ export function aggregate(sessions, opts = {}) {
 
   return {
     pilotName: name || null,
+    /* The track this record is narrowed to, echoed back so a page rendering it
+     * does not have to remember what it asked for. */
+    track: opts.track == null ? null : opts.track,
+    tracks: [...seen.values()].sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0)),
     totals: {
       sessions: perSession.length,
       sessionsWithLaps: withLaps.length,

@@ -76,6 +76,7 @@ export function enqueue(session, entry, who = pilot.get()) {
       runId: session.runId,
       at: session.at,
       mode: session.mode,
+      track: session.track || null,
       consecN: session.consecN,
       minLap: session.minLap,
       holeshot: session.holeshot,
@@ -228,8 +229,11 @@ export async function deleteEverything() {
 
 /* ----------------------------------------------------------------- public -- */
 
-export function fetchPilot(id) {
-  return get(`/v1/pilots/${encodeURIComponent(id)}`);
+/** One pilot's record. `track` narrows it: null for every track, '' for the
+ *  sessions flown before one was named, or the track's name. */
+export function fetchPilot(id, track = null) {
+  const q = track == null ? '' : `?track=${encodeURIComponent(track)}`;
+  return get(`/v1/pilots/${encodeURIComponent(id)}${q}`);
 }
 
 export function fetchLeaderboard() {

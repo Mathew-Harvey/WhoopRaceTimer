@@ -11,7 +11,7 @@
  * what are the numbers underneath.
  */
 'use strict';
-import { dashboardSeries, fmtDuration, fmtLap, fmtSpread } from './aggregate.js';
+import { dashboardSeries, fmtDuration, fmtLap, fmtSpread, trackKey } from './aggregate.js';
 import * as charts from './charts.js';
 import * as store from './store.js';
 import { h, mount, plural } from './ui.js';
@@ -36,9 +36,44 @@ const PERIODS = [['day', 'Days'], ['week', 'Weeks'], ['month', 'Months']];
 
 /* ------------------------------------------------------------- the cards -- */
 
-function headline(rec, consecN, heading) {
+/**
+ * The track filter.
+ *
+ * Built from rec.tracks, which aggregate() computes over everything the pilot
+ * has flown rather than over the filtered subset -- so choosing one track never
+ * removes the others from the control, which would be a one-way door.
+ *
+ * Absent entirely for somebody who has only ever flown one place, because a
+ * filter with one option is a control that cannot do anything.
+ */
+function trackFilter(rec, onTrack) {
+  const tracks = rec.tracks || [];
+  if (!onTrack || tracks.length < 2) return null;
+  const ALL = '\u0000all';
+  const value = rec.track == null ? ALL : rec.track;
+  return h('div.row.trackfilter', { style: { gap: 'var(--s2)' } },
+    h('label.cap', { for: 'trackpick' }, 'Track'),
+    h('select', {
+      id: 'trackpick', 'aria-label': 'Which track',
+      style: { width: 'auto', minWidth: '150px' },
+      onchange: e => onTrack(e.target.value === ALL ? null : e.target.value),
+    },
+      h('option', { value: ALL, selected: rec.track == null },
+        `All tracks (${rec.tracks.reduce((a, t) => a + t.sessions, 0)})`),
+      ...tracks.map(t => h('option', {
+        value: t.key ? t.name : '',
+        selected: rec.track != null && trackKey(rec.track) === t.key,
+      }, `${t.key ? t.name : 'No track recorded'} (${t.sessions})`))));
+}
+
+function headline(rec, consecN, heading, onTrack) {
+  const filter = trackFilter(rec, onTrack);
   return card(
     heading || null,
+    filter,
+    rec.track != null ? h('p.muted.fignote', rec.track
+      ? `Only sessions flown at ${rec.track}.`
+      : 'Only the sessions flown before a track was named.') : null,
     h('div.statgrid',
       stat('Best lap', fmtLap(rec.best.lap), 'purple'),
       stat(`Best ${consecN || 3}`, fmtLap(rec.best.consec)),
@@ -164,12 +199,13 @@ function cleaningNote(rec, { own }) {
  * `own` only changes pronouns. Nothing about what is shown or how it is
  * computed depends on whose page this is.
  */
-export function dashboard(rec, { today = Date.now(), own = false, heading = null } = {}) {
+export function dashboard(rec, { today = Date.now(), own = false, heading = null,
+                                 onTrack = null } = {}) {
   const series = dashboardSeries(rec, { today });
   const consecN = rec.sessions[0] && rec.sessions[0].consecN;
 
   return [
-    headline(rec, consecN, heading),
+    headline(rec, consecN, heading, onTrack),
     cleaningNote(rec, { own }),
     daysFlown(series),
 

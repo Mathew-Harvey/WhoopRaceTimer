@@ -18,6 +18,7 @@ import { dashboard } from './dashboard.js';
 import * as pilot from './pilot.js';
 import * as publish from './publish.js';
 import * as store from './store.js';
+import * as track from './track.js';
 import { SCREENS } from './screens.js';
 import { confirmSheet, h, mount, plural, sheet, sheetOpen, toast } from './ui.js';
 
@@ -46,8 +47,25 @@ export function focusName() {
   return knownNames()[0] || null;
 }
 
-export function localRecord(name = focusName()) {
-  return aggregate(store.load('history', []), { pilotName: name });
+/**
+ * Which track the Stats screen is narrowed to.
+ *
+ * null is every track, '' is the sessions flown before anybody named one, and
+ * anything else is that track. Remembered, because a pilot who flies two places
+ * mostly wants to look at one of them.
+ */
+export function focusTrack() {
+  return store.load('statsTrack', null);
+}
+
+export function setFocusTrack(value) {
+  if (value == null) store.clear('statsTrack');
+  else store.save('statsTrack', value);
+  return value;
+}
+
+export function localRecord(name = focusName(), trackFilter = focusTrack()) {
+  return aggregate(store.load('history', []), { pilotName: name, track: trackFilter });
 }
 
 /* --------------------------------------------------------------- consent -- */
@@ -58,12 +76,28 @@ export function localRecord(name = focusName()) {
  */
 export function askToPublish(app, { onDone } = {}) {
   let name = pilot.get().name || focusName() || '';
+  let where = track.currentName() || '';
   const err = h('p.muted', { style: { color: 'var(--state-red)' }, hidden: true });
   const input = h('input', {
     value: name, maxlength: 32, placeholder: 'The name to show',
     'aria-label': 'Public display name',
     oninput: e => { name = e.target.value; err.hidden = true; },
   });
+  const trackInput = h('input', {
+    value: where, maxlength: track.MAX, id: 'pubtrack', autocomplete: 'off',
+    placeholder: 'Bunbury hall, the back paddock…', 'aria-label': 'Track',
+    oninput: e => { where = e.target.value; },
+  });
+
+  /* The track is not part of the consent. It is saved on this device whichever
+   * button is pressed, because somebody who typed where they are flying has
+   * said something true about tonight and throwing it away on a "no thanks" to
+   * publishing would be answering a question they were not asked. */
+  const keepTrack = () => {
+    if (track.trackProblem(where)) return;
+    if (track.trackKey(where) === track.trackKey(track.currentName())) return;
+    track.set(where);
+  };
 
   sheet('Save your times?', close => h('div.stack',
     h('p', 'WhoopTimer keeps every session on this device already. You can also publish ' +
@@ -81,13 +115,25 @@ export function askToPublish(app, { onDone } = {}) {
       h('span.hint', 'A nickname is fine. You can change it or delete everything later.')),
     err,
 
+    h('div.field',
+      h('label', { for: 'pubtrack' }, 'What track are you flying tonight?'),
+      trackInput,
+      h('span.hint', 'Stamped on tonight\u2019s sessions so your stats can be read one ' +
+                     'track at a time. Saved on this device either way, and you can leave ' +
+                     'it blank.')),
+    track.known().length ? h('div.row', { style: { gap: 'var(--s2)' } },
+      ...track.known().slice(0, 6).map(t => h('button.pill', {
+        onclick: () => { where = t.name; trackInput.value = t.name; },
+      }, t.name))) : null,
+
     h('div.row', { style: { gap: '8px' } },
       h('button.ghost', { style: { flex: '1' },
-        onclick: () => { pilot.decline(); close(); onDone?.(false); app?.render?.(); } },
+        onclick: () => { keepTrack(); pilot.decline(); close(); onDone?.(false); app?.render?.(); } },
         'No thanks'),
       h('button.go', { style: { flex: '1' }, onclick: () => {
         const problem = pilot.nameProblem(name);
         if (problem) { err.textContent = problem; err.hidden = false; return; }
+        keepTrack();
         pilot.acceptPublic(name);
         close();
         queueEverything();
@@ -289,7 +335,10 @@ SCREENS.stats = app => {
         'Back to the session')),
 
     rec
-      ? dashboard(rec, { own: true, heading })
+      ? dashboard(rec, {
+          own: true, heading,
+          onTrack: v => { setFocusTrack(v); app.render(); },
+        })
       : h('div.card', h('p.muted',
           'No sessions saved on this device yet. Fly one and it lands here.')),
 
